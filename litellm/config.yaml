@@ -1,0 +1,46 @@
+# LiteLLM Proxy configuration.
+# The chatbot's "litellm" provider talks to this gateway; models listed here
+# are what agents can select when their provider is LiteLLM. Add entries for
+# Anthropic, Gemini, Azure, Ollama, ... and restart the `litellm` service.
+# Docs: https://docs.litellm.ai/docs/proxy/configs
+
+model_list:
+  # --- OpenAI models routed through LiteLLM -------------------------------
+  - model_name: gpt-4.1-mini
+    litellm_params:
+      model: openai/gpt-4.1-mini
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: gpt-4.1
+    litellm_params:
+      model: openai/gpt-4.1
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+  - model_name: text-embedding-3-small
+    litellm_params:
+      model: openai/text-embedding-3-small
+      api_key: os.environ/OPENAI_API_KEY
+
+  # --- Examples for other backends (uncomment and set the key in .env) -----
+  # - model_name: claude-sonnet
+  #   litellm_params:
+  #     model: anthropic/claude-sonnet-4-5
+  #     api_key: os.environ/ANTHROPIC_API_KEY
+  # - model_name: gemini-flash
+  #   litellm_params:
+  #     model: gemini/gemini-2.5-flash
+  #     api_key: os.environ/GEMINI_API_KEY
+  # - model_name: llama3-local
+  #   litellm_params:
+  #     model: ollama/llama3.1
+  #     api_base: http://host.docker.internal:11434
+
+litellm_settings:
+  drop_params: true          # silently drop params a backend does not support
+  request_timeout: 60
+  num_retries: 0             # the chatbot handles retries and fallback itself
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

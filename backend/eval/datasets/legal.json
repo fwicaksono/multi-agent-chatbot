@@ -1,0 +1,32 @@
+{
+  "agent": {
+    "name": "Eval - Agent Legal",
+    "description": "Contract templates and NDA assistant (evaluation)",
+    "instructions": "You are the legal assistant. Explain clauses precisely, quote clause numbers and defined terms, and state exact periods and amounts."
+  },
+  "documents": ["legal/service_agreement_template.docx", "legal/scanned_nda.pdf"],
+  "questions": [
+    {"id": "lg-01", "question": "What is the initial term of the master service agreement?", "expected": {"document": "service_agreement_template.docx", "section": "2. Term"}, "answer_keywords": ["24 months"]},
+    {"id": "lg-02", "question": "How much notice is needed to stop the agreement from renewing?", "expected": {"document": "service_agreement_template.docx", "section": "2. Term"}, "answer_keywords": ["60 days"]},
+    {"id": "lg-03", "question": "Within how many days must invoices be paid?", "expected": {"document": "service_agreement_template.docx", "section": "3. Fees"}, "answer_keywords": ["30 days"]},
+    {"id": "lg-04", "question": "What is the monthly fee for the Enterprise tier?", "expected": {"document": "service_agreement_template.docx", "section": "3. Fees"}, "answer_keywords": ["150,000,000"]},
+    {"id": "lg-05", "question": "What response time does the Professional tier guarantee?", "expected": {"document": "service_agreement_template.docx", "section": "3. Fees"}, "answer_keywords": ["8 business hours"]},
+    {"id": "lg-06", "question": "What interest applies to late payments?", "expected": {"document": "service_agreement_template.docx", "section": "3. Fees"}, "answer_keywords": ["1%"]},
+    {"id": "lg-07", "question": "How much notice is required to terminate for convenience?", "expected": {"document": "service_agreement_template.docx", "section": "4.1"}, "answer_keywords": ["90 days"]},
+    {"id": "lg-08", "question": "How long does a party have to remedy a material breach before termination for cause?", "expected": {"document": "service_agreement_template.docx", "section": "4.2"}, "answer_keywords": ["30 days"]},
+    {"id": "lg-09", "question": "How long do confidentiality obligations survive after the master service agreement ends?", "expected": {"document": "service_agreement_template.docx", "section": "6. Confidentiality"}, "answer_keywords": ["5 years"]},
+    {"id": "lg-10", "question": "What is the cap on each party's liability?", "expected": {"document": "service_agreement_template.docx", "section": "7. Limitation"}, "answer_keywords": ["12 months"]},
+    {"id": "lg-11", "question": "Where are disputes resolved and by which arbitration body?", "expected": {"document": "service_agreement_template.docx", "section": "8. Governing"}, "answer_keywords": ["BANI"]},
+    {"id": "lg-12", "question": "How long does the NDA remain in force?", "expected": {"document": "scanned_nda.pdf", "page": 1}, "answer_keywords": ["3 years"]},
+    {"id": "lg-13", "question": "Within how many days must confidential materials be returned after a request under the NDA?", "expected": {"document": "scanned_nda.pdf", "page": 1}, "answer_keywords": ["14 days"]},
+    {"id": "lg-14", "question": "What liquidated damages apply for breaching the NDA?", "expected": {"document": "scanned_nda.pdf", "page": 1}, "answer_keywords": ["500,000,000"]},
+    {"id": "lg-15", "question": "What information is excluded from confidentiality under the NDA?", "expected": {"document": "scanned_nda.pdf", "page": 1}, "answer_keywords": ["publicly available"]},
+    {"id": "lg-16", "question": "How many days of annual leave do employees get?", "answerable": false, "note": "HR agent's knowledge - must not leak into Legal"},
+    {"id": "lg-17", "question": "What is the penalty for breaching the non-compete clause?", "answerable": false},
+    {"id": "lg-18", "question": "What is the hourly rate for additional consulting work?", "answerable": false}
+  ],
+  "conversations": [
+    {"id": "lg-mt-1", "turns": ["What notice period applies to termination for convenience?", "What about termination for cause?"], "final_keywords": ["30 days"]},
+    {"id": "lg-mt-2", "turns": ["How long is the initial term of the service agreement?", "What about the NDA then?"], "final_keywords": ["3 years"]}
+  ]
+}

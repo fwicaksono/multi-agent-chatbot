@@ -1,0 +1,32 @@
+{
+  "agent": {
+    "name": "Eval - Agent HR",
+    "description": "Employee handbook assistant (evaluation)",
+    "instructions": "You are the HR assistant for Nusantara Digital employees. Answer using the employee handbook only and state exact numbers and deadlines."
+  },
+  "documents": ["hr/employee_handbook.pdf"],
+  "questions": [
+    {"id": "hr-01", "question": "How many days of paid annual leave do permanent employees get per year?", "expected": {"document": "employee_handbook.pdf", "page": 2}, "answer_keywords": ["18"]},
+    {"id": "hr-02", "question": "How many unused leave days can I carry over, and until when must I use them?", "expected": {"document": "employee_handbook.pdf", "page": 2}, "answer_keywords": ["5", "31 March"]},
+    {"id": "hr-03", "question": "How much paid sick leave is there per year?", "expected": {"document": "employee_handbook.pdf", "page": 2}, "answer_keywords": ["14"]},
+    {"id": "hr-04", "question": "When do I need a doctor's certificate for sick leave?", "expected": {"document": "employee_handbook.pdf", "page": 2}, "answer_keywords": ["2"]},
+    {"id": "hr-05", "question": "How long is maternity leave?", "expected": {"document": "employee_handbook.pdf", "page": 2}, "answer_keywords": ["3 months"]},
+    {"id": "hr-06", "question": "How many days of paternity leave are fathers entitled to?", "expected": {"document": "employee_handbook.pdf", "page": 2}, "answer_keywords": ["10"]},
+    {"id": "hr-07", "question": "How many days per week can I work from home?", "expected": {"document": "employee_handbook.pdf", "page": 1}, "answer_keywords": ["3"]},
+    {"id": "hr-08", "question": "Is there an allowance for setting up a home office?", "expected": {"document": "employee_handbook.pdf", "page": 1}, "answer_keywords": ["2,500,000"]},
+    {"id": "hr-09", "question": "What are the core collaboration hours?", "expected": {"document": "employee_handbook.pdf", "page": 1}, "answer_keywords": ["10:00", "15:00"]},
+    {"id": "hr-10", "question": "How is approved overtime compensated?", "expected": {"document": "employee_handbook.pdf", "page": 1}, "answer_keywords": ["1.5"]},
+    {"id": "hr-11", "question": "What is the deadline for submitting expense claims?", "expected": {"document": "employee_handbook.pdf", "page": 3}, "answer_keywords": ["30 days"]},
+    {"id": "hr-12", "question": "What is the daily meal limit during business travel?", "expected": {"document": "employee_handbook.pdf", "page": 3}, "answer_keywords": ["300,000"]},
+    {"id": "hr-13", "question": "How big is the annual learning and development budget?", "expected": {"document": "employee_handbook.pdf", "page": 3}, "answer_keywords": ["7,500,000"]},
+    {"id": "hr-14", "question": "When do performance reviews take place?", "expected": {"document": "employee_handbook.pdf", "page": 3}, "answer_keywords": ["June", "December"]},
+    {"id": "hr-15", "question": "Can I accept gifts from vendors?", "expected": {"document": "employee_handbook.pdf", "page": 3}, "answer_keywords": ["500,000"]},
+    {"id": "hr-16", "question": "What is the vesting schedule for employee stock options?", "answerable": false},
+    {"id": "hr-17", "question": "How much does the dental insurance cover per year?", "answerable": false},
+    {"id": "hr-18", "question": "What is the notice period for terminating the master service agreement for convenience?", "answerable": false, "note": "Legal agent's knowledge - must not leak into HR"}
+  ],
+  "conversations": [
+    {"id": "hr-mt-1", "turns": ["How many days of annual leave do I get?", "And how many of those can I carry over?"], "final_keywords": ["5"]},
+    {"id": "hr-mt-2", "turns": ["What does the handbook say about sick leave?", "What about the contract then? I mean paternity leave."], "final_keywords": ["10"]}
+  ]
+}

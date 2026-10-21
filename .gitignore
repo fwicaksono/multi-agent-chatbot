@@ -1,0 +1,35 @@
+# --- Secrets & local config ---
+.env
+.env.*
+!.env.example
+
+# --- Local-only material (requested to stay out of version control) ---
+assets/
+prompt.txt
+architecture.html
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# --- Runtime data ---
+backend/data/
+data/
+
+# --- Frontend ---
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# --- OS / editors ---
+.DS_Store
+.idea/
+.vscode/
+*.swp

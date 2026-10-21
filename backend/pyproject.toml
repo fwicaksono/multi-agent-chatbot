@@ -1,0 +1,49 @@
+[project]
+name = "multi-agent-chatbot"
+version = "1.0.0"
+description = "Multi-agent RAG chatbot with per-agent knowledge bases and pluggable LLM providers"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "pgvector>=0.3.6",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "httpx>=0.28",
+    "openai>=1.58",
+    "python-multipart>=0.0.20",
+    "pypdfium2>=4.30",
+    "python-docx>=1.1",
+    "pytesseract>=0.3.13",
+    "pillow>=11.0",
+    "tiktoken>=0.8",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "reportlab>=4.2",
+    "ruff>=0.8",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = ["integration: requires a running PostgreSQL (pgvector) database"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
+ignore = ["B008", "ASYNC240"]
