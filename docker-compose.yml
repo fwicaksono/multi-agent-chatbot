@@ -65,6 +65,9 @@ services:
         condition: service_started
 
   worker:
+    # Same image as `api`. `build` is needed too: on a fresh server the image
+    # does not exist yet, and without it Compose tries to pull it from Docker Hub.
+    build: ./backend
     image: multi-agent-chatbot/backend:local
     restart: unless-stopped
     command: ["worker"]
