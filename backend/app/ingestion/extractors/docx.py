@@ -19,6 +19,7 @@ from docx.text.paragraph import Paragraph
 
 from app.ingestion.errors import CorruptedFileError
 from app.ingestion.extractors.base import ExtractedDocument, TextBlock, normalise_text
+from app.ingestion.validation import check_docx_archive
 
 _MAX_SECTION_DEPTH = 3
 
@@ -49,6 +50,7 @@ def _table_text(table: Table) -> str:
 
 class DocxExtractor:
     def extract(self, path: Path) -> ExtractedDocument:
+        check_docx_archive(path, "This Word document")  # also guards re-processing
         try:
             document: DocxDocument = docx.Document(str(path))
         except (PackageNotFoundError, zipfile.BadZipFile, KeyError, ValueError) as exc:

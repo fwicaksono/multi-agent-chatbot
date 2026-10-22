@@ -8,8 +8,10 @@ document's status.
 
 from __future__ import annotations
 
+import io
+import zipfile
 from dataclasses import dataclass
-from pathlib import PurePath
+from pathlib import Path, PurePath
 
 from app.ingestion.errors import EmptyFileError, FileTooLargeError, UnsupportedFileError
 
@@ -26,6 +28,30 @@ _KINDS = {
         "docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     ),
 }
+
+
+# A .docx is a ZIP archive. These limits stop "zip bombs" (a few MB on disk,
+# hundreds of MB unpacked) that would tie up the worker for many minutes.
+# Very large real documents stay far below them.
+MAX_DOCX_UNPACKED_BYTES = 200 * 1024 * 1024
+MAX_DOCX_XML_BYTES = 60 * 1024 * 1024
+
+
+def check_docx_archive(source: bytes | Path, name: str) -> None:
+    """Reject archives that unpack to an unreasonable size (reads only the ZIP index)."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(source) if isinstance(source, bytes) else source) as z:
+            entries = z.infolist()
+    except (zipfile.BadZipFile, OSError):
+        return  # not a readable archive: the extractor reports it as corrupted
+    total = sum(e.file_size for e in entries)
+    xml = sum(e.file_size for e in entries if e.filename.endswith((".xml", ".rels")))
+    if total > MAX_DOCX_UNPACKED_BYTES or xml > MAX_DOCX_XML_BYTES:
+        raise FileTooLargeError(
+            f"{name} unpacks to {total / 1_048_576:.0f} MB, more than this server accepts "
+            f"({MAX_DOCX_UNPACKED_BYTES // 1_048_576} MB, of which at most "
+            f"{MAX_DOCX_XML_BYTES // 1_048_576} MB of text). Split the document into smaller files."
+        )
 
 
 def validate_upload(filename: str, data: bytes, max_bytes: int) -> FileKind:
@@ -56,4 +82,6 @@ def validate_upload(filename: str, data: bytes, max_bytes: int) -> FileKind:
             f"'{filename}' has a .docx extension but is not a valid Word document "
             "(it may be corrupted or a renamed .doc file)."
         )
+    if kind.file_type == "docx":
+        check_docx_archive(data, f"'{filename}'")
     return kind

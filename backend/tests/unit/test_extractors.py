@@ -90,3 +90,20 @@ def test_parallel_pdf_extraction_is_thread_safe(sample_data: Path):
             pool.map(lambda _: [b.text for b in extractor.extract(path).blocks], range(80))
         )
     assert all(r == expected for r in results)
+
+
+def test_ocr_page_cap_is_reported_not_silent(monkeypatch, tmp_path):
+    """A huge scan must not block a worker for hours; skipped pages are reported."""
+    from PIL import Image
+
+    pages = [Image.new("RGB", (400, 560), "white") for _ in range(4)]
+    path = tmp_path / "scan.pdf"
+    pages[0].save(path, "PDF", save_all=True, append_images=pages[1:])
+    calls = []
+    monkeypatch.setattr(pdf_module, "tesseract_available", lambda: True)
+    monkeypatch.setattr(
+        pdf_module, "ocr_image", lambda image, lang: calls.append(1) or "Scanned text on this page."
+    )
+    doc = PdfExtractor(ocr_enabled=True, ocr_max_pages=2).extract(path)
+    assert len(calls) == 2 and doc.ocr_page_count == 2
+    assert doc.notes and "2 more scanned pages were not read" in doc.notes[0]

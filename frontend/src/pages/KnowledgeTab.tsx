@@ -84,6 +84,11 @@ function DocumentRow({
             )}
             <span>Added {formatRelative(doc.created_at)}</span>
           </p>
+          {doc.status === "ready" && doc.error_message && (
+            <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800" role="note">
+              {doc.error_message}
+            </p>
+          )}
           {doc.status === "failed" && doc.error_message && (
             <p className="mt-2 rounded-md bg-rose-50 px-3 py-2 text-xs text-rose-700" role="note">
               {doc.error_message}

@@ -122,13 +122,15 @@ async def mark_ready(session: AsyncSession, document_id: uuid.UUID, **fields: An
         update(Document)
         .where(Document.id == document_id)
         .values(
-            status=DocumentStatus.READY,
-            stage=DocumentStage.DONE,
-            error_code=None,
-            error_message=None,
-            locked_at=None,
-            processed_at=func.now(),
-            **fields,
+            **{
+                "status": DocumentStatus.READY,
+                "stage": DocumentStage.DONE,
+                "error_code": None,
+                "error_message": None,  # may carry a non-fatal note for ready documents
+                "locked_at": None,
+                "processed_at": func.now(),
+                **fields,
+            }
         )
     )
 

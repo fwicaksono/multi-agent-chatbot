@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     ocr_languages: str = "eng"
     ocr_dpi: int = 300
     ocr_min_chars_per_page: int = 25
+    # Cap per document: OCR takes seconds per page, a huge scan must not block a worker for hours.
+    ocr_max_pages: int = Field(default=300, ge=1)
 
     # --- Embeddings --------------------------------------------------------
     embedding_provider: str = "openai"

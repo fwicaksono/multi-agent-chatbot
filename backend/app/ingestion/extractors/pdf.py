@@ -36,11 +36,13 @@ class PdfExtractor:
         ocr_languages: str = "eng",
         ocr_dpi: int = 300,
         ocr_min_chars: int = 25,
+        ocr_max_pages: int = 300,
     ) -> None:
         self.ocr_enabled = ocr_enabled
         self.ocr_languages = ocr_languages
         self.ocr_dpi = ocr_dpi
         self.ocr_min_chars = ocr_min_chars
+        self.ocr_max_pages = ocr_max_pages
 
     def extract(self, path: Path) -> ExtractedDocument:
         with _PDFIUM_LOCK:
@@ -68,13 +70,18 @@ class PdfExtractor:
         result = ExtractedDocument(page_count=page_count)
         image_only_pages: list[int] = []
         use_ocr = self.ocr_enabled and tesseract_available()
+        ocr_attempts = ocr_skipped = 0
 
         for index in range(page_count):
             page_number = index + 1
-            text, image = self._read_page(pdf, index, render=use_ocr)
+            can_ocr = use_ocr and ocr_attempts < self.ocr_max_pages
+            text, image = self._read_page(pdf, index, render=can_ocr)
 
             if len(text) < self.ocr_min_chars:
-                if use_ocr and image is not None:
+                if use_ocr and not can_ocr:
+                    ocr_skipped += 1
+                elif use_ocr and image is not None:
+                    ocr_attempts += 1
                     ocr_text = self._ocr(image, page_number)
                     if len(ocr_text) > len(text):
                         result.ocr_page_count += 1
@@ -86,6 +93,12 @@ class PdfExtractor:
             if text:
                 result.blocks.append(TextBlock(text, page_number=page_number))
 
+        if ocr_skipped:
+            result.notes.append(
+                f"OCR read the first {self.ocr_max_pages} scanned pages; {ocr_skipped} more "
+                "scanned pages were not read (OCR_MAX_PAGES). Split the PDF to index them."
+            )
+            logger.warning("ocr.page_cap_reached", extra={"skipped_pages": ocr_skipped})
         if not result.blocks and image_only_pages:
             reason = (
                 "OCR is disabled (set OCR_ENABLED=true)"

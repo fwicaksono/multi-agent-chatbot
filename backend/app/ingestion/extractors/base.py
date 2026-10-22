@@ -27,6 +27,8 @@ class ExtractedDocument:
     blocks: list[TextBlock] = field(default_factory=list)
     page_count: int | None = None
     ocr_page_count: int = 0
+    # Non-fatal remarks shown on the document (e.g. pages skipped by the OCR cap).
+    notes: list[str] = field(default_factory=list)
 
     @property
     def char_count(self) -> int:

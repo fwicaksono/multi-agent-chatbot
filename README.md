@@ -127,7 +127,7 @@ SSE events: `meta` → `rewrite`? → `sources` → `fallback`* → `token`* →
 
 ### Ingestion flow
 
-The upload is validated synchronously (extension, magic bytes, size, empty file, duplicate SHA-256) and the file is written atomically to the `uploads` volume. A `documents` row is created with `status=processing, stage=queued`, and the API returns `202`.
+The upload is validated synchronously (extension, magic bytes, size, empty file, duplicate SHA-256, and for DOCX the unpacked size, which rejects "zip bombs": a 1.4 MB file unpacking to 334 MB is refused in milliseconds instead of occupying a worker for many minutes) and the file is written atomically to the `uploads` volume. A `documents` row is created with `status=processing, stage=queued`, and the API returns `202`.
 
 The worker claims the job with `SELECT … FOR UPDATE SKIP LOCKED`, then runs **extract → OCR (pages without text) → chunk → embed** and inserts the chunks (vector plus `tsvector`) and marks the document `ready` **in one transaction**.
 
@@ -289,7 +289,7 @@ All configuration comes from environment variables, loaded from `.env`. `.env.ex
 | `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL` / `EMBEDDING_DIMENSIONS` | `openai` / `text-embedding-3-small` / `1536` | Global embedding settings |
 | `CHUNK_SIZE_TOKENS` / `CHUNK_OVERLAP_TOKENS` | `450` / `60` | Chunking |
 | `RETRIEVAL_TOP_K` / `RETRIEVAL_MIN_SIMILARITY` / `FTS_LANGUAGES` | `6` / `0.2` / `english,indonesian` | Retrieval. Each chunk is keyword-indexed in its detected language; after changing the languages run `python -m app.workers.rebuild_keyword_index` |
-| `OCR_ENABLED` / `OCR_LANGUAGES` | `true` / `eng+ind` | Tesseract OCR for image-only pages |
+| `OCR_ENABLED` / `OCR_LANGUAGES` / `OCR_MAX_PAGES` | `true` / `eng+ind` / `300` | Tesseract OCR for image-only pages; beyond the cap, skipped pages are reported as a note on the document |
 | `CHAT_HISTORY_MESSAGES` / `QUERY_REWRITE_ENABLED` | `10` / `true` | Multi-turn context: the latest messages sent word for word |
 | `CHAT_SUMMARY_ENABLED` / `CHAT_SUMMARY_MAX_TOKENS` | `true` / `400` | Older messages are condensed into a rolling summary that is always sent, so long conversations stay remembered at a fixed cost |
 | `MAX_UPLOAD_MB` / `MAX_FILES_PER_UPLOAD` | `25` / `20` | Upload limits |
@@ -305,13 +305,13 @@ To **add models to LiteLLM** (for example Anthropic, Gemini or a local Ollama), 
 # Backend (Python 3.12, uv)
 cd backend
 uv sync                                    # installs runtime + dev deps
-uv run pytest                              # 96 unit tests; integration tests skip without a DB
+uv run pytest                              # 101 unit tests; integration tests skip without a DB
 uv run ruff check . && uv run ruff format --check .
 
 # Integration tests: real PostgreSQL + pgvector (isolation, cascade deletes, full API flow)
 docker run -d --name pg-test -e POSTGRES_USER=chatbot -e POSTGRES_PASSWORD=chatbot -e POSTGRES_DB=chatbot_test \
   -p 55432:5432 pgvector/pgvector:0.8.0-pg17
-TEST_DATABASE_URL=postgresql+asyncpg://chatbot:chatbot@localhost:55432/chatbot_test uv run pytest   # 120 tests
+TEST_DATABASE_URL=postgresql+asyncpg://chatbot:chatbot@localhost:55432/chatbot_test uv run pytest   # 125 tests
 
 # Run the API locally against that DB (worker embedded in the API process)
 DATABASE_URL=postgresql+asyncpg://chatbot:chatbot@localhost:55432/chatbot_test EMBEDDED_WORKER=true \
@@ -439,7 +439,7 @@ To use **Amazon RDS for PostgreSQL** instead of the bundled database container, 
 | **P5** Embedding provider separate from chat provider | `embeddings/` (global setting); README §4 | Configuration + docs |
 | **P6** Keys only from environment, never committed | `core/config.py` (`SecretStr`); `.env` git-ignored | Secret scan of the git history |
 | **T1–T6** FastAPI, UI, persistent vector store, `docker compose up`, `.env` / `.env.example` | See §1, §3, §6 | `docker compose up --build` from a clean checkout |
-| **T7** Unit tests for ingestion and the provider abstraction | `backend/tests/unit` | 96 unit tests |
+| **T7** Unit tests for ingestion and the provider abstraction | `backend/tests/unit` | 101 unit tests |
 | **T8** Clear errors and logs for timeouts, rate limits, bad keys | `llm/errors.py`, retries, JSON logs | Provider error tests; `llm.retry` / `llm.fallback` logs |
 | **T9** Public, non-confidential data | Fictional generated documents | `scripts/generate_sample_data.py` |
 | **B1** Streaming | SSE end to end (nginx and Caddy unbuffered) | UI + streaming tests |

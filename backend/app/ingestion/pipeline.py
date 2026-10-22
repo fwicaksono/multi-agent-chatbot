@@ -46,6 +46,7 @@ class IngestionResult:
     embedding_tokens: int = 0
     embedding_model: str = ""
     embedding_provider: str = ""
+    notes: list[str] = field(default_factory=list)
 
 
 def contextual_header(filename: str, chunk: TextChunk) -> str:
@@ -81,6 +82,7 @@ class IngestionPipeline:
                     ocr_languages=settings.ocr_languages,
                     ocr_dpi=settings.ocr_dpi,
                     ocr_min_chars=settings.ocr_min_chars_per_page,
+                    ocr_max_pages=settings.ocr_max_pages,
                 ),
                 "docx": DocxExtractor(),
             },
@@ -134,4 +136,5 @@ class IngestionPipeline:
             embedding_tokens=embedded.prompt_tokens,
             embedding_model=embedded.model,
             embedding_provider=embedded.provider,
+            notes=extracted.notes,
         )

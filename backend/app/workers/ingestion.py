@@ -222,6 +222,7 @@ class IngestionWorker:
                 chunk_count=len(result.chunks),
                 char_count=result.char_count,
                 embedding_model=result.embedding_model,
+                error_message=" ".join(result.notes) or None,
             )
             await usage_repo.record_usage(
                 session,
