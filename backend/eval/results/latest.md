@@ -1,4 +1,4 @@
-_Run 2026-10-21 23:02 UTC · provider `openai` · model `gpt-4.1-mini` · top-k 6_
+_Run 2026-10-21 23:36 UTC · provider `openai` · model `gpt-4.1-mini` · top-k 6_
 
 **Retrieval** (answerable questions; a hit = expected document *and* page/section)
 
@@ -15,5 +15,5 @@ _Run 2026-10-21 23:02 UTC · provider `openai` · model `gpt-4.1-mini` · top-k 
 
 | Agent | Questions | Answer acc. | Citation acc. | Abstention acc. | False IDK | Multi-turn | Avg latency | Cost |
 |---|---|---|---|---|---|---|---|---|
-| hr | 18 | 100% | 100% | 100% | 0% | 100% | 1.4s | $0.0083 |
+| hr | 18 | 100% | 100% | 100% | 0% | 100% | 1.6s | $0.0082 |
 | legal | 18 | 100% | 100% | 100% | 0% | 100% | 1.3s | $0.0072 |

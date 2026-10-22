@@ -1,0 +1,65 @@
+# Production overrides for a single server (e.g. AWS EC2):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Differences from the development stack:
+#   * only Caddy is reachable from outside (ports 80/443); the API, LiteLLM and
+#     nginx ports are no longer published on the host
+#   * Caddy adds HTTPS (when SITE_ADDRESS is a domain) and password protection
+#   * container logs are rotated so they cannot fill the disk
+# Required .env values: SITE_ADDRESS, PUBLIC_URL, BASIC_AUTH_USER, BASIC_AUTH_HASH.
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  db:
+    logging: *logging
+
+  litellm:
+    ports: !reset []
+    logging: *logging
+
+  api:
+    ports: !reset []
+    environment:
+      ENVIRONMENT: production
+      CORS_ORIGINS: ${PUBLIC_URL:-http://localhost}
+      OPENROUTER_APP_URL: ${PUBLIC_URL:-http://localhost}
+    logging: *logging
+
+  worker:
+    environment:
+      ENVIRONMENT: production
+    logging: *logging
+
+  web:
+    ports: !reset []
+    logging: *logging
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:?Set BASIC_AUTH_USER in .env}
+      BASIC_AUTH_HASH: ${BASIC_AUTH_HASH:?Set BASIC_AUTH_HASH in .env (see the deployment guide)}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    logging: *logging
+
+volumes:
+  caddy_data:
+  caddy_config:

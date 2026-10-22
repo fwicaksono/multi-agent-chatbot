@@ -25,10 +25,22 @@ export const useModels = (provider: string | undefined) =>
     staleTime: 5 * 60_000,
   });
 
-export const useAgents = () => useQuery({ queryKey: keys.agents, queryFn: api.listAgents });
+// Agents poll while any of their documents is processing, so document counts
+// (and the chat's "no ready documents" hint) update when ingestion finishes.
+export const useAgents = () =>
+  useQuery({
+    queryKey: keys.agents,
+    queryFn: api.listAgents,
+    refetchInterval: (q) => (q.state.data?.some((a) => a.document_counts.processing > 0) ? 3000 : false),
+  });
 
 export const useAgent = (id: string | undefined) =>
-  useQuery({ queryKey: keys.agent(id ?? ""), queryFn: () => api.getAgent(id!), enabled: !!id });
+  useQuery({
+    queryKey: keys.agent(id ?? ""),
+    queryFn: () => api.getAgent(id!),
+    enabled: !!id,
+    refetchInterval: (q) => (q.state.data?.document_counts.processing ? 3000 : false),
+  });
 
 export function useCreateAgent() {
   const qc = useQueryClient();

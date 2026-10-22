@@ -74,7 +74,11 @@ export function AgentWorkspace() {
           ))}
         </nav>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">{agent && <Outlet context={{ agent } satisfies WorkspaceContext} />}</div>
+      {/* Keyed by agent: switching agents remounts the tabs, so in-flight chat
+          streams and local state never carry over to another agent. */}
+      <div key={agentId} className="min-h-0 flex-1 overflow-y-auto">
+        {agent && <Outlet context={{ agent } satisfies WorkspaceContext} />}
+      </div>
     </div>
   );
 }

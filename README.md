@@ -23,6 +23,8 @@ Create AI agents, give each one its **own isolated knowledge base** of PDF/DOCX 
 9. [Assumptions](#9-assumptions)
 10. [Limitations and future work](#10-limitations-and-future-work)
 11. [Use of AI coding assistants](#11-use-of-ai-coding-assistants)
+12. [Deployment (single server, e.g. AWS EC2)](#12-deployment-single-server-eg-aws-ec2)
+13. [Requirements checklist](#13-requirements-checklist)
 
 ---
 
@@ -153,6 +155,7 @@ frontend/src/        pages/, components/ (ui, chat, knowledge, agents, layout), 
 litellm/config.yaml  model aliases served by the LiteLLM proxy
 sample_data/         generated test documents (native PDF, DOCX with table, scanned PDF, broken files)
 scripts/             generate_sample_data.py
+deploy/Caddyfile     production reverse proxy (HTTPS + basic auth), used by docker-compose.prod.yml
 ```
 
 ---
@@ -238,7 +241,7 @@ Latest run (`backend/eval/results/latest.md`; `gpt-4.1-mini`, `text-embedding-3-
 
 | Agent | Answer accuracy | Citation accuracy | Abstention accuracy | False "I don't know" | Multi-turn | Avg latency | Cost (whole run) |
 |---|---|---|---|---|---|---|---|
-| HR | 100% | 100% | 100% | 0% | 100% (2/2) | 1.4 s | $0.0083 |
+| HR | 100% | 100% | 100% | 0% | 100% (2/2) | 1.6 s | $0.0082 |
 | Legal | 100% | 100% | 100% | 0% | 100% (2/2) | 1.3 s | $0.0072 |
 
 Metric definitions:
@@ -279,13 +282,13 @@ To **add models to LiteLLM** (for example Anthropic, Gemini or a local Ollama), 
 # Backend (Python 3.12, uv)
 cd backend
 uv sync                                    # installs runtime + dev deps
-uv run pytest                              # 76 unit tests; integration tests skip without a DB
+uv run pytest                              # 79 unit tests; integration tests skip without a DB
 uv run ruff check . && uv run ruff format --check .
 
 # Integration tests: real PostgreSQL + pgvector (isolation, cascade deletes, full API flow)
 docker run -d --name pg-test -e POSTGRES_USER=chatbot -e POSTGRES_PASSWORD=chatbot -e POSTGRES_DB=chatbot_test \
   -p 55432:5432 pgvector/pgvector:0.8.0-pg17
-TEST_DATABASE_URL=postgresql+asyncpg://chatbot:chatbot@localhost:55432/chatbot_test uv run pytest   # 87 tests
+TEST_DATABASE_URL=postgresql+asyncpg://chatbot:chatbot@localhost:55432/chatbot_test uv run pytest   # 91 tests
 
 # Run the API locally against that DB (worker embedded in the API process)
 DATABASE_URL=postgresql+asyncpg://chatbot:chatbot@localhost:55432/chatbot_test EMBEDDED_WORKER=true \
@@ -349,7 +352,7 @@ Interactive docs are at **`/api/docs`**. Summary:
 - **Ingestion:** layout-aware PDF parsing (tables, multi-column layouts, headers and footers), PDF heading detection for section citations, more formats (PPTX, HTML, TXT), streaming uploads to object storage (S3/GCS behind the same `FileStorage` interface), and a real queue (for example Redis/Arq) at higher throughput.
 - **Chat:** persist partially streamed answers when the client disconnects; token-budgeted history (summarise old turns instead of a fixed window); conversation export.
 - **Operations:** OpenTelemetry tracing and metrics (latency per stage, provider error rates), an alert when fallback is used frequently, and budget limits per agent built on the usage table.
-- **Cloud demo (bonus B7)** was not done. The compose stack deploys as is to a single VM (for example Fly.io, Railway or a GCE VM with Docker). For production, split into a managed Postgres with pgvector, a container service for api, worker and web, and a secret manager for keys.
+- **Cloud demo (bonus B7):** the production configuration is included and tested locally (§12), but no public demo link is provided. Beyond a single server, the next step is a managed Postgres with pgvector (an RDS override is included), a container service for api, worker and web, and a secret manager for keys.
 
 ---
 
@@ -368,3 +371,59 @@ Design decisions were made deliberately and checked by running the system end to
 - OpenRouter headers being lost with an injected HTTP client.
 
 All tests, the evaluation run and the screenshots-based UI review were executed against the running stack.
+
+---
+
+## 12. Deployment (single server, e.g. AWS EC2)
+
+`docker-compose.prod.yml` turns the development stack into a production deployment for one server:
+
+- **Only Caddy is public** (ports 80/443). The API, LiteLLM, nginx and PostgreSQL ports are no longer published on the host.
+- **HTTPS is automatic** when `SITE_ADDRESS` is a domain (Let's Encrypt). With `SITE_ADDRESS=:80` the app is served over plain HTTP on the server's IP.
+- **The whole site is password-protected** with HTTP basic auth (`BASIC_AUTH_USER` / `BASIC_AUTH_HASH`), because the app has no user accounts of its own.
+- **Container logs are rotated**, and chat streaming passes through Caddy unbuffered.
+
+```bash
+cp .env.example .env    # fill OPENAI_API_KEY, POSTGRES_PASSWORD, LITELLM_API_KEY and the production section
+docker run --rm caddy:2.10-alpine caddy hash-password --plaintext 'your-password'   # paste into BASIC_AUTH_HASH='...'
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+To use **Amazon RDS for PostgreSQL** instead of the bundled database container, set `RDS_DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@ENDPOINT:5432/DB?ssl=require` and add `-f docker-compose.rds.yml`. The `db` container is then not started, and the first migration creates the pgvector extension on RDS.
+
+---
+
+## 13. Requirements checklist
+
+| Requirement | Where it is implemented | How it is verified |
+|---|---|---|
+| **A1** Create agent with name, description, instructions, provider, model | `POST /api/agents`, `services/agents.py`, *New agent* page | Integration `test_full_user_workflow`; manual UI |
+| **A2** List, edit, delete; delete removes all knowledge | `ON DELETE CASCADE` in `db/models.py` + `FileStorage.delete_agent` | `test_deleting_agent_removes_all_its_data`; live check (rows and files removed) |
+| **A3** Isolated knowledge per agent | Every chunk query requires `agent_id` (`repositories/chunks.py`) | `test_retrieval_never_crosses_agents` (vector, keyword, hybrid); eval cross-agent questions |
+| **K1, K2** Upload PDF/DOCX, many files, any time | `POST /api/agents/{id}/documents` (multipart, multiple) | Integration test; UI dropzone |
+| **K3** Extract, chunk, embed, store, with documented rationale | `ingestion/` pipeline + worker; README §4 | `test_pipeline`, `test_chunker`, `test_extractors` |
+| **K4** Status per document: processing / ready / failed | `documents.status` + `stage`; live-polling list | Integration test; UI |
+| **K5** Deleted documents never used again | Cascade delete + retrieval joins `status = ready` | `test_deleted_document_is_never_retrieved_again`, `test_processing_documents_are_not_searchable` |
+| **K6** Clear errors for corrupted, empty and scanned files | `ingestion/validation.py`, `errors.py`, extractors | `test_validation`, `test_extractors`; `sample_data/invalid/` |
+| **C1** Select an agent and chat | Chat tab, conversations API | Integration test; UI |
+| **C2** Grounded answers citing document + page/section | `rag/prompts.py`, `rag/citations.py`, source panel | Eval citation accuracy 100% |
+| **C3** "I don't know" instead of inventing | Grounding rules; no-documents short-circuit | Eval abstention accuracy 100%; integration test |
+| **C4** Multi-turn follow-ups | History + query rewriting (`services/chat.py`) | Eval multi-turn 100%; integration test |
+| **P1** OpenAI, LiteLLM, OpenRouter | `llm/providers/*.py` | `test_llm_providers` |
+| **P2** Provider/model per agent, switchable without code changes | Agent fields; chat-header switcher; PATCH | Integration test (switch, then chat with history intact) |
+| **P3** Own abstraction; 4th provider without touching chat/retrieval | `LLMProvider` + auto-discovered registry | `test_fourth_provider_plugs_in_without_touching_core` |
+| **P4** LiteLLM is its own provider | `LiteLLMProvider` talks to the LiteLLM proxy | `test_litellm_is_independent_of_other_providers` |
+| **P5** Embedding provider separate from chat provider | `embeddings/` (global setting); README §4 | Configuration + docs |
+| **P6** Keys only from environment, never committed | `core/config.py` (`SecretStr`); `.env` git-ignored | Secret scan of the git history |
+| **T1–T6** FastAPI, UI, persistent vector store, `docker compose up`, `.env` / `.env.example` | See §1, §3, §6 | `docker compose up --build` from a clean checkout |
+| **T7** Unit tests for ingestion and the provider abstraction | `backend/tests/unit` | 79 unit tests |
+| **T8** Clear errors and logs for timeouts, rate limits, bad keys | `llm/errors.py`, retries, JSON logs | Provider error tests; `llm.retry` / `llm.fallback` logs |
+| **T9** Public, non-confidential data | Fictional generated documents | `scripts/generate_sample_data.py` |
+| **B1** Streaming | SSE end to end (nginx and Caddy unbuffered) | UI + streaming tests |
+| **B2** OCR for scanned PDFs | Tesseract in the backend image | Scanned NDA answers in the eval |
+| **B3** Hybrid search | pgvector + full-text + RRF | Eval: hybrid Hit@1 1.00 vs 0.87–0.93 |
+| **B4** Evaluation set with metrics | `backend/eval/` | §5 |
+| **B5** Automatic fallback | `llm/router.py` | `test_router`; live fallback on a missing key / bad model |
+| **B6** Token usage and cost per agent | `usage_records`, Usage pages | Integration test (all usage kinds recorded) |
+| **B7** Cloud deployment | §12 (production config, tested locally) | No public demo link |
+

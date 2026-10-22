@@ -1,0 +1,33 @@
+# Public entry point for production (docker-compose.prod.yml).
+#
+# SITE_ADDRESS decides the mode:
+#   :80                 plain HTTP on the server's IP address
+#   chat.example.com    HTTPS with an automatic Let's Encrypt certificate
+#                       (the domain's DNS A record must point to this server)
+#
+# The application has no user accounts, so every request requires the HTTP
+# basic-auth user/password from .env (BASIC_AUTH_USER / BASIC_AUTH_HASH).
+
+{$SITE_ADDRESS::80} {
+	encode gzip
+
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+
+	request_body {
+		max_size 200MB
+	}
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options DENY
+		-Server
+	}
+
+	reverse_proxy web:80 {
+		# Stream chat tokens (Server-Sent Events) without buffering.
+		flush_interval -1
+	}
+}

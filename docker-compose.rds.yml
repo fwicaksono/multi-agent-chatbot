@@ -1,0 +1,23 @@
+# Optional: use Amazon RDS for PostgreSQL instead of the bundled `db` container.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.rds.yml up -d --build
+#
+# Requires in .env:
+#   RDS_DATABASE_URL=postgresql+asyncpg://USER:PASSWORD@ENDPOINT:5432/DBNAME?ssl=require
+# The pgvector extension is created by the first migration (the RDS master user
+# is allowed to do this). Use PostgreSQL 16/17 so pgvector >= 0.8 is available.
+
+services:
+  db:
+    profiles: ["bundled-db"]   # not started unless explicitly requested
+
+  api:
+    environment:
+      DATABASE_URL: ${RDS_DATABASE_URL:?Set RDS_DATABASE_URL in .env}
+    depends_on: !override
+      litellm:
+        condition: service_started
+
+  worker:
+    environment:
+      DATABASE_URL: ${RDS_DATABASE_URL:?Set RDS_DATABASE_URL in .env}

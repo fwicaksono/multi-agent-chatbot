@@ -49,9 +49,17 @@ async def create(session: AsyncSession, data: AgentCreate) -> Agent:
 async def update(session: AsyncSession, agent_id: uuid.UUID, data: AgentUpdate) -> Agent:
     agent = await get_or_404(session, agent_id)
     changes = data.model_dump(exclude_unset=True)
+    # Required columns: an explicit null must be a 422, not a database error.
     for key in ("name", "provider", "model"):
-        if key in changes and (changes[key] is None or not str(changes[key]).strip()):
-            raise ValidationFailed(f"'{key}' cannot be empty.", details={"field": key})
+        if key in changes:
+            if changes[key] is None or not str(changes[key]).strip():
+                raise ValidationFailed(f"'{key}' cannot be empty.", details={"field": key})
+            changes[key] = changes[key].strip()
+    if "temperature" in changes and changes["temperature"] is None:
+        raise ValidationFailed("'temperature' cannot be null.", details={"field": "temperature"})
+    for key in ("description", "instructions"):
+        if key in changes and changes[key] is None:
+            changes[key] = ""
     for key in ("fallback_provider", "fallback_model"):
         if key in changes and isinstance(changes[key], str) and not changes[key].strip():
             changes[key] = None

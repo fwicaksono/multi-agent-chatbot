@@ -7,6 +7,7 @@
 assets/
 prompt.txt
 architecture.html
+deploy-ec2.html
 
 # --- Python ---
 __pycache__/

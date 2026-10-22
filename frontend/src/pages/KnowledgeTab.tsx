@@ -162,8 +162,8 @@ export function KnowledgeTab() {
       {rejected.length > 0 && (
         <Alert tone="warning" title={`${rejected.length} file${rejected.length > 1 ? "s were" : " was"} not added`}>
           <ul className="list-disc space-y-0.5 pl-4">
-            {rejected.map((r) => (
-              <li key={r.filename}>{r.message}</li>
+            {rejected.map((r, i) => (
+              <li key={`${i}-${r.filename}`}>{r.message}</li>
             ))}
           </ul>
         </Alert>

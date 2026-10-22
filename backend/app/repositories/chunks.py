@@ -95,13 +95,30 @@ def _hit(row, score: float) -> ChunkHit:
     )
 
 
+_iterative_scan_supported: bool | None = None
+
+
+async def _supports_iterative_scan(session: AsyncSession) -> bool:
+    global _iterative_scan_supported
+    if _iterative_scan_supported is None:
+        version = await session.scalar(
+            text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+        )
+        parts = tuple(int(p) for p in re.findall(r"\d+", version or "0")[:2])
+        _iterative_scan_supported = parts >= (0, 8)
+    return _iterative_scan_supported
+
+
 async def vector_search(
     session: AsyncSession, agent_id: uuid.UUID, embedding: list[float], limit: int
 ) -> list[ChunkHit]:
     # With a WHERE filter, a plain HNSW scan returns the global top-ef_search
     # neighbours and *then* filters, which can starve small agents. pgvector
     # >= 0.8 "iterative scans" keep walking the graph until enough rows pass.
-    await session.execute(text("SET LOCAL hnsw.iterative_scan = 'relaxed_order'"))
+    # Older pgvector (e.g. some managed databases) rejects the setting, so it
+    # is only applied when supported.
+    if await _supports_iterative_scan(session):
+        await session.execute(text("SET LOCAL hnsw.iterative_scan = 'relaxed_order'"))
     distance = Chunk.embedding.cosine_distance(embedding)
     rows = await session.execute(
         _base_query(agent_id)

@@ -142,9 +142,13 @@ class ChatService:
             },
         )
 
-        # 1. Rewrite follow-ups into a standalone query for retrieval.
+        async with session_scope() as session:
+            ready_chunks = await chunk_repo.count_ready_chunks(session, ctx.agent_id)
+
+        # 1. Rewrite follow-ups into a standalone query for retrieval (skipped
+        #    when there is nothing to retrieve from).
         standalone = ctx.question
-        if ctx.history and self.settings.query_rewrite_enabled:
+        if ready_chunks and ctx.history and self.settings.query_rewrite_enabled:
             standalone = await self._rewrite(ctx, accounting)
             if standalone != ctx.question:
                 yield ChatEvent("rewrite", {"query": standalone})
@@ -152,7 +156,6 @@ class ChatService:
         # 2. Retrieve from this agent's knowledge base only.
         try:
             async with session_scope() as session:
-                ready_chunks = await chunk_repo.count_ready_chunks(session, ctx.agent_id)
                 result = (
                     await self.retriever.retrieve(session, ctx.agent_id, standalone)
                     if ready_chunks

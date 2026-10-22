@@ -1,6 +1,6 @@
 {
   "meta": {
-    "date": "2026-10-21 23:02 UTC",
+    "date": "2026-10-21 23:36 UTC",
     "provider": "openai",
     "model": "gpt-4.1-mini",
     "top_k": 6
@@ -34,8 +34,8 @@
       "false_abstention_rate": 0.0,
       "abstention_accuracy": 1.0,
       "multiturn_accuracy": 1.0,
-      "avg_latency_ms": 1419,
-      "total_cost_usd": 0.00826,
+      "avg_latency_ms": 1562,
+      "total_cost_usd": 0.00824,
       "failures": []
     },
     {
@@ -66,8 +66,8 @@
       "false_abstention_rate": 0.0,
       "abstention_accuracy": 1.0,
       "multiturn_accuracy": 1.0,
-      "avg_latency_ms": 1340,
-      "total_cost_usd": 0.00721,
+      "avg_latency_ms": 1330,
+      "total_cost_usd": 0.00724,
       "failures": []
     }
   ]

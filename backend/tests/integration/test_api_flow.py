@@ -211,6 +211,11 @@ async def test_agent_without_documents_says_it_does_not_know(client):
         f"/api/conversations/{conv['id']}/messages?stream=false", json={"content": "Anything?"}
     )
     assert r.json()["content"].startswith("I don't know")
+    # A follow-up must not pay for a query rewrite either: nothing to retrieve.
+    r = await client.post(
+        f"/api/conversations/{conv['id']}/messages?stream=false", json={"content": "And now?"}
+    )
+    assert r.json()["content"].startswith("I don't know")
     assert CitingProvider.requests == []  # no LLM call needed
 
 
@@ -220,3 +225,17 @@ async def test_errors_use_a_consistent_envelope(client):
     assert r.json()["error"]["code"] == "not_found"
     r = await client.post("/api/agents", json={"name": ""})
     assert r.status_code == 422 and r.json()["error"]["code"] == "validation_error"
+
+
+async def test_patch_with_null_values_is_validated_not_a_500(client):
+    agent = (
+        await client.post("/api/agents", json={"name": "A", "provider": "citing", "model": "c"})
+    ).json()
+    url = f"/api/agents/{agent['id']}"
+    for body in ({"temperature": None}, {"name": None}, {"model": None}, {"provider": None}):
+        r = await client.patch(url, json=body)
+        assert r.status_code == 422, (body, r.text)
+        assert r.json()["error"]["code"] == "validation_error"
+    r = await client.patch(url, json={"description": None, "instructions": None, "model": " c2 "})
+    assert r.status_code == 200
+    assert (r.json()["description"], r.json()["instructions"], r.json()["model"]) == ("", "", "c2")

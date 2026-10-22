@@ -132,3 +132,18 @@ def test_cost_estimation_and_snapshot_names():
     assert pricing.estimate_cost("openai/gpt-4o-mini-2024-07-18", 1_000_000) == pytest.approx(0.15)
     assert pricing.estimate_cost("text-embedding-3-small", 1_000_000) == pytest.approx(0.02)
     assert pricing.estimate_cost("totally-unknown-model", 100, 100) is None
+
+
+# --------------------------------------------------------------------------- pgvector version
+
+
+@pytest.mark.parametrize("version,expected", [("0.8.0", True), ("0.10.1", True), ("0.7.4", False)])
+async def test_iterative_scan_only_on_pgvector_0_8_plus(monkeypatch, version, expected):
+    from app.repositories import chunks
+
+    class FakeSession:
+        async def scalar(self, _stmt):
+            return version
+
+    monkeypatch.setattr(chunks, "_iterative_scan_supported", None)
+    assert await chunks._supports_iterative_scan(FakeSession()) is expected
