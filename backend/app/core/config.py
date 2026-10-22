@@ -7,11 +7,12 @@ application can be reconfigured without code changes. Secrets are typed as
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -72,10 +73,20 @@ class Settings(BaseSettings):
     retrieval_candidate_k: int = 20
     retrieval_min_similarity: float = 0.2
     retrieval_rrf_k: int = 60
-    fts_language: str = "english"
+    # PostgreSQL text-search configurations for keyword search. Each chunk is
+    # indexed with its detected language; queries match against all of them.
+    fts_languages: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["english", "indonesian"]
+    )
+    # Deprecated single-language setting, still honoured if FTS_LANGUAGES is unset.
+    fts_language: str | None = None
 
     # --- Chat --------------------------------------------------------------
-    chat_history_messages: int = 10
+    chat_history_messages: int = Field(default=10, ge=0, le=500)
+    # Older messages are condensed into a rolling summary that is always given
+    # to the model, so long conversations stay remembered at a fixed cost.
+    chat_summary_enabled: bool = True
+    chat_summary_max_tokens: int = Field(default=400, ge=50, le=4000)
     query_rewrite_enabled: bool = True
     chat_max_output_tokens: int = 1024
 
@@ -96,6 +107,9 @@ class Settings(BaseSettings):
 
     litellm_api_base: str = "http://localhost:4000"
     litellm_api_key: SecretStr | None = None
+    # Someone else's LiteLLM proxy (e.g. your company's). When set it replaces the
+    # bundled `litellm` container, both in Docker and when running locally.
+    litellm_external_url: str | None = None
 
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
@@ -112,6 +126,43 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip().startswith("["):
             return [v.strip() for v in value.split(",") if v.strip()]
         return value
+
+    @field_validator("fts_languages", mode="before")
+    @classmethod
+    def _split_languages(cls, value: object) -> object:
+        if isinstance(value, str):
+            value = [v.strip().lower() for v in value.split(",") if v.strip()]
+        if isinstance(value, list):
+            for lang in value:
+                if not re.fullmatch(r"[a-z_]+", str(lang)):
+                    raise ValueError(f"invalid text-search configuration name: {lang!r}")
+            if not value:
+                raise ValueError("FTS_LANGUAGES must name at least one language")
+        return value
+
+    @field_validator("litellm_api_base", "litellm_external_url", mode="before")
+    @classmethod
+    def _normalise_litellm_url(cls, value: object) -> object:
+        # Accept "https://host/", "https://host/v1" or "https://host/v1/": the
+        # provider appends /v1/... itself.
+        if isinstance(value, str):
+            value = value.strip().rstrip("/")
+            if value.endswith("/v1"):
+                value = value[: -len("/v1")]
+            return value or None
+        return value
+
+    @model_validator(mode="after")
+    def _use_external_litellm(self) -> Settings:
+        if self.litellm_external_url:
+            self.litellm_api_base = self.litellm_external_url
+        return self
+
+    @model_validator(mode="after")
+    def _legacy_fts_language(self) -> Settings:
+        if self.fts_language and "fts_languages" not in self.model_fields_set:
+            self.fts_languages = [self.fts_language.strip().lower()]
+        return self
 
     @field_validator("openai_api_key", "litellm_api_key", "openrouter_api_key", mode="before")
     @classmethod

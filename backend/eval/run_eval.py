@@ -42,13 +42,22 @@ MODES = ("vector", "keyword", "hybrid")
 IDK = re.compile(
     r"\b(don['’]t|do not|does not|doesn['’]t|cannot|can['’]t) (know|find|contain|mention|cover|"
     r"include|provide|specify|answer)|\bnot (covered|mentioned|specified|included|available)\b|"
-    r"\bno (information|mention)\b",
+    r"\bno (information|mention)\b|"
+    # Indonesian: "saya tidak tahu", "tidak disebutkan", "tidak ada informasi", ...
+    r"\btidak (tahu|tersedia|disebutkan|tercantum|terdapat|ditemukan|menemukan|mengetahui|"
+    r"dijelaskan|diatur|"
+    r"memuat|mencakup|membahas|menyebutkan|ada informasi)\b|\bbelum (ada|tersedia)\b",
     re.IGNORECASE,
 )
 
 
 def norm(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower().replace("’", "'"))
+
+
+def has_fact(answer: str, keyword: str) -> bool:
+    """True if any alternative of "a|b" occurs in the answer (case-insensitive)."""
+    return any(norm(alt) in norm(answer) for alt in keyword.split("|"))
 
 
 def matches(source: dict[str, Any], expected: dict[str, Any]) -> bool:
@@ -155,7 +164,7 @@ def evaluate(api: Client, dataset: dict, agent_id: str, top_k: int) -> Scores:
         abstained = bool(IDK.search(answer))
 
         if answerable:
-            correct = all(norm(k) in norm(answer) for k in q["answer_keywords"])
+            correct = all(has_fact(answer, k) for k in q["answer_keywords"])
             cited = any(matches(c, q["expected"]) for c in reply["citations"])
             s.answer_correct.append(correct)
             s.citation_correct.append(cited)
@@ -175,7 +184,7 @@ def evaluate(api: Client, dataset: dict, agent_id: str, top_k: int) -> Scores:
         for turn in c["turns"]:
             reply = api.ask(conv["id"], turn)
         ok = reply.get("event") == "done" and all(
-            norm(k) in norm(reply["content"]) for k in c["final_keywords"]
+            has_fact(reply["content"], k) for k in c["final_keywords"]
         )
         s.multiturn_correct.append(ok)
         if not ok:

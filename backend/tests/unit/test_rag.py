@@ -47,11 +47,15 @@ def test_rrf_handles_single_source():
     assert fused[0].vector_rank is None and fused[0].keyword_rank == 1
 
 
-def test_or_tsquery_builder_sanitises_input():
-    assert to_or_tsquery_text("What's the notice-period (in days)?!") == (
-        "what | the | notice | period | in | days"
+def test_or_tsquery_builder_sanitises_input_and_drops_stop_words():
+    langs = ["english", "indonesian"]
+    assert to_or_tsquery_text("What's the notice-period (in days)?!", langs) == (
+        "notice | period | days"
     )
-    assert to_or_tsquery_text("?? ! &&") == ""
+    assert to_or_tsquery_text("Berapa hari cuti tahunan yang saya dapat?", langs) == (
+        "hari | cuti | tahunan"
+    )
+    assert to_or_tsquery_text("?? ! &&", langs) == ""
 
 
 # --------------------------------------------------------------------------- citations
@@ -159,3 +163,27 @@ def test_history_citation_markers_are_stripped_but_not_other_brackets():
     assert strip_citation_markers("Signed in [2023]; see [1](https://x)") == (
         "Signed in [2023]; see [1](https://x)"
     )
+
+
+def test_summary_is_given_as_memory_not_as_a_knowledge_source():
+    from app.rag.prompts import build_summary_messages
+
+    msgs = build_answer_messages(
+        agent_name="A",
+        agent_instructions="",
+        history=[],
+        question="q",
+        hits=[],
+        summary="- asked about leave",
+    )
+    system = msgs[0].content
+    assert "## Earlier in this conversation (summary)\n- asked about leave" in system
+    assert "not a knowledge source" in system
+    assert system.index("Earlier in this conversation") < system.index("## Context passages")
+
+    rewrite = build_rewrite_messages([], "and the contract?", summary="- asked about leave")
+    assert "Summary of earlier conversation:\n- asked about leave" in rewrite[1].content
+
+    summary = build_summary_messages(None, [ChatMessage("user", "hi")], max_words=120)
+    assert "at most 120 words" in summary[0].content
+    assert "Current summary:\n(empty)" in summary[1].content

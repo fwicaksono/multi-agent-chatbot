@@ -17,10 +17,10 @@ from sqlalchemy.dialects.postgresql import REGCONFIG
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Chunk, Document, DocumentStatus
+from app.ingestion.language import query_terms
 from app.ingestion.pipeline import PreparedChunk
 
 _INSERT_BATCH = 200
-_WORD = re.compile(r"[^\W_]{2,}", re.UNICODE)
 
 
 @dataclass(slots=True)
@@ -41,9 +41,7 @@ async def insert_chunks(
     agent_id: uuid.UUID,
     document_id: uuid.UUID,
     chunks: list[PreparedChunk],
-    fts_language: str,
 ) -> None:
-    lang = cast(literal(fts_language), REGCONFIG)
     for start in range(0, len(chunks), _INSERT_BATCH):
         rows = [
             {
@@ -56,8 +54,9 @@ async def insert_chunks(
                 "section": p.chunk.section,
                 "token_count": p.chunk.token_count,
                 "embedding": p.embedding,
-                "tsv": func.to_tsvector(lang, p.indexed_text),
-                "metadata": {"ocr": p.chunk.ocr},
+                # Each chunk is indexed with the rules of its own language.
+                "tsv": func.to_tsvector(_regconfig(p.language), p.indexed_text),
+                "metadata": {"ocr": p.chunk.ocr, "language": p.language},
             }
             for p in chunks[start : start + _INSERT_BATCH]
         ]
@@ -130,25 +129,47 @@ async def vector_search(
     return sorted(hits, key=lambda h: h.score, reverse=True)
 
 
-def to_or_tsquery_text(query: str) -> str:
-    """'What is the notice period?' -> 'what | is | the | notice | period'.
+def _regconfig(language: str):
+    return cast(literal(language), REGCONFIG)
+
+
+def to_or_tsquery_text(query: str, languages: list[str]) -> str:
+    """'Berapa hari cuti tahunan?' -> 'hari | cuti | tahunan'.
 
     OR semantics (instead of websearch_to_tsquery's AND) suit natural-language
-    questions; ranking rewards chunks that match more/rarer terms. Postgres
-    drops stop words for the configured language.
+    questions; ranking rewards chunks that match more/rarer terms. Stop words of
+    every configured language are dropped first (PostgreSQL's `indonesian`
+    configuration has no stop-word list of its own).
     """
-    words = list(dict.fromkeys(w.lower() for w in _WORD.findall(query)))
-    return " | ".join(words[:32])
+    return " | ".join(query_terms(query, languages))
+
+
+def multilingual_tsquery(query: str, languages: list[str]):
+    """One tsquery per language, OR-ed together, so a question matches chunks
+    indexed in any language: 'tahunan' is stemmed to 'tahun' for Indonesian
+    chunks and kept as-is for English ones."""
+    if isinstance(languages, str):  # tolerate a single configuration name
+        languages = [languages]
+    text_query = to_or_tsquery_text(query, languages)
+    if not text_query:
+        return None
+    combined = None
+    for language in languages:
+        part = func.to_tsquery(_regconfig(language), text_query)
+        combined = part if combined is None else combined.op("||")(part)
+    return combined
 
 
 async def keyword_search(
-    session: AsyncSession, agent_id: uuid.UUID, query: str, limit: int, fts_language: str
+    session: AsyncSession,
+    agent_id: uuid.UUID,
+    query: str,
+    limit: int,
+    languages: list[str],
 ) -> list[ChunkHit]:
-    tsquery_text = to_or_tsquery_text(query)
-    if not tsquery_text:
+    tsquery = multilingual_tsquery(query, languages)
+    if tsquery is None:
         return []
-    lang = cast(literal(fts_language), REGCONFIG)
-    tsquery = func.to_tsquery(lang, tsquery_text)
     rank = func.ts_rank_cd(Chunk.tsv, tsquery, 32)  # 32: rank / (rank + 1)
     rows = await session.execute(
         _base_query(agent_id)
@@ -158,6 +179,13 @@ async def keyword_search(
         .limit(limit)
     )
     return [_hit(r, r.rank) for r in rows]
+
+
+async def unknown_text_search_configs(session: AsyncSession, languages: list[str]) -> list[str]:
+    """Configured languages that this PostgreSQL server does not provide."""
+    rows = await session.scalars(text("SELECT cfgname FROM pg_ts_config"))
+    available = set(rows)
+    return [lang for lang in languages if lang not in available]
 
 
 async def count_ready_chunks(session: AsyncSession, agent_id: uuid.UUID) -> int:
@@ -170,3 +198,17 @@ async def count_ready_chunks(session: AsyncSession, agent_id: uuid.UUID) -> int:
         )
         or 0
     )
+
+
+async def verify_text_search_configs(languages: list[str]) -> None:
+    """Fail fast at startup when FTS_LANGUAGES names an unknown configuration."""
+    from app.db.session import session_scope
+
+    async with session_scope() as session:
+        unknown = await unknown_text_search_configs(session, languages)
+    if unknown:
+        raise RuntimeError(
+            f"FTS_LANGUAGES contains {', '.join(unknown)}, which PostgreSQL does not provide. "
+            "Use built-in configurations such as english, indonesian or simple "
+            "(see: SELECT cfgname FROM pg_ts_config)."
+        )

@@ -33,7 +33,11 @@ from app.llm.base import ChatMessage, ChatRequest, StreamDelta, StreamEnd, Token
 from app.llm.errors import ProviderError
 from app.llm.router import FallbackEvent, LLMRouter, Target, build_chain
 from app.rag.citations import build_citations, build_sources, strip_citation_markers
-from app.rag.prompts import build_answer_messages, build_rewrite_messages
+from app.rag.prompts import (
+    build_answer_messages,
+    build_rewrite_messages,
+    build_summary_messages,
+)
 from app.repositories import agents as agent_repo
 from app.repositories import chunks as chunk_repo
 from app.repositories import conversations as conv_repo
@@ -65,6 +69,7 @@ class TurnContext:
     temperature: float
     chain: list[Target]
     history: list[ChatMessage] = field(default_factory=list)
+    summary: str | None = None  # condensed memory of messages older than `history`
 
 
 @dataclass(slots=True)
@@ -77,6 +82,27 @@ class TurnAccounting:
         self.prompt_tokens += prompt
         self.completion_tokens += completion
         self.cost_usd += cost
+
+
+# Follow-up rewriting only needs the latest turns (plus the summary).
+REWRITE_HISTORY_MESSAGES = 6
+# Each summary call reads at most this many tokens of messages; a long backlog
+# is processed in several calls.
+SUMMARY_BATCH_TOKENS = 6000
+SUMMARY_MAX_BATCHES = 20
+
+
+def _take_batch(messages: list[Any], budget: int) -> list[Any]:
+    """Oldest messages whose combined size fits the token budget (at least one)."""
+    batch: list[Any] = []
+    used = 0
+    for m in messages:
+        size = count_tokens(m.content[:3000])  # same per-message cap as the prompt
+        if batch and used + size > budget:
+            break
+        batch.append(m)
+        used += size
+    return batch
 
 
 # Strong references to fire-and-forget tasks (asyncio keeps only weak ones).
@@ -120,12 +146,19 @@ class ChatService:
             if agent is None:  # pragma: no cover - cascade makes this unreachable
                 raise NotFoundError("Agent not found.")
 
-            history = await conv_repo.recent_messages(
-                session, conv.id, self.settings.chat_history_messages
-            )
+            window = self.settings.chat_history_messages
+            # Messages not yet summarised are sent verbatim, but never more than one
+            # extra window: if summarising keeps failing, prompts must stay bounded.
+            memory = await conv_repo.load_memory(session, conv, window, max_unsummarized=window)
+            if self.settings.chat_summary_enabled:
+                # Messages not yet folded into the summary are kept verbatim.
+                history = [*memory.unsummarized, *memory.recent]
+                summary = memory.summary
+            else:
+                history, summary = memory.recent, None
             user_msg = await conv_repo.add_message(session, conv.id, role="user", content=question)
             await conv_repo.touch(
-                session, conv, title=_title_from(question) if not history else None
+                session, conv, title=_title_from(question) if memory.is_empty else None
             )
             return TurnContext(
                 conversation_id=conv.id,
@@ -143,6 +176,7 @@ class ChatService:
                     )
                     for m in history
                 ],
+                summary=summary,
             )
 
     async def run_turn(self, ctx: TurnContext) -> AsyncIterator[ChatEvent]:
@@ -225,6 +259,7 @@ class ChatService:
             question=ctx.question,
             hits=hits,
             standalone_question=standalone,
+            summary=ctx.summary,
         )
         request = ChatRequest(
             model=primary.model,
@@ -306,7 +341,11 @@ class ChatService:
     async def _rewrite(self, ctx: TurnContext, accounting: TurnAccounting) -> str:
         request = ChatRequest(
             model=ctx.chain[0].model,
-            messages=build_rewrite_messages(ctx.history, ctx.question),
+            # Resolving "what about X?" only needs the last turns (and the summary);
+            # sending a long history here would multiply the cost of every follow-up.
+            messages=build_rewrite_messages(
+                ctx.history[-REWRITE_HISTORY_MESSAGES:], ctx.question, ctx.summary
+            ),
             temperature=0.0,
             max_tokens=200,
         )
@@ -379,6 +418,9 @@ class ChatService:
                 cost_usd=accounting.cost_usd,
                 latency_ms=latency_ms,
             )
+        if self.settings.chat_summary_enabled:
+            # Off the request path: the user already has the answer.
+            _spawn(self._update_summary(ctx))
         logger.info(
             "chat.turn_completed",
             extra={
@@ -410,6 +452,79 @@ class ChatService:
                 "latency_ms": latency_ms,
             },
         )
+
+    async def _update_summary(self, ctx: TurnContext) -> None:
+        """Fold messages that left the verbatim window into the rolling summary.
+
+        A long backlog (e.g. memory switched on for an existing conversation) is
+        summarised in token-bounded batches, oldest first, until caught up.
+        """
+        log = {"conversation_id": str(ctx.conversation_id)}
+        try:
+            async with session_scope() as session:
+                conv = await conv_repo.get_conversation(session, ctx.conversation_id)
+                if conv is None:
+                    return
+                memory = await conv_repo.load_memory(
+                    session, conv, self.settings.chat_history_messages
+                )
+            summary, until = memory.summary, memory.summary_until
+            backlog = memory.unsummarized
+            for _ in range(SUMMARY_MAX_BATCHES):
+                if not backlog:
+                    return
+                batch = _take_batch(backlog, SUMMARY_BATCH_TOKENS)
+                new_summary = await self._summarise(ctx, summary, batch)
+                if not new_summary:
+                    return
+                async with session_scope() as session:
+                    saved = await conv_repo.save_summary(
+                        session,
+                        ctx.conversation_id,
+                        new_summary,
+                        until=batch[-1].created_at,
+                        expected_until=until,
+                    )
+                if not saved:  # another update won the race; it carries on from there
+                    logger.info("chat.summary_skipped", extra=log)
+                    return
+                summary, until = new_summary, batch[-1].created_at
+                backlog = backlog[len(batch) :]
+                logger.info(
+                    "chat.summary_updated",
+                    extra={**log, "folded_messages": len(batch), "remaining": len(backlog)},
+                )
+        except Exception:  # never affects the user; older messages stay verbatim
+            logger.exception("chat.summary_failed", extra=log)
+
+    async def _summarise(self, ctx: TurnContext, previous: str | None, batch: list[Any]) -> str:
+        older = [
+            ChatMessage(
+                m.role, strip_citation_markers(m.content) if m.role == "assistant" else m.content
+            )
+            for m in batch
+        ]
+        max_tokens = self.settings.chat_summary_max_tokens
+        request = ChatRequest(
+            model=ctx.chain[0].model,
+            messages=build_summary_messages(previous, older, int(max_tokens * 0.6)),
+            temperature=0.0,
+            max_tokens=max_tokens,
+        )
+        response, _ = await self.router.complete(request, ctx.chain)
+        async with session_scope() as session:
+            await usage_repo.record_usage(
+                session,
+                agent_id=ctx.agent_id,
+                conversation_id=ctx.conversation_id,
+                kind="history_summary",
+                provider=response.provider,
+                model=response.model,
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                reported_cost=response.usage.cost_usd,
+            )
+        return response.content.strip()
 
     async def _save_cancelled(
         self,

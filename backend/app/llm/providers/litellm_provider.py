@@ -27,15 +27,25 @@ from app.llm.base import (
 )
 from app.llm.errors import (
     ProviderError,
+    auth_error,
     empty_response_error,
     error_from_status,
+    quota_error,
     timeout_error,
     unavailable_error,
 )
 from app.llm.registry import register_provider
 from app.llm.sse import error_detail, iter_sse_json, retry_after_seconds
 
-ENV_HINT = "LITELLM_API_BASE / LITELLM_API_KEY"
+ENV_HINT = "LITELLM_API_KEY (and LITELLM_EXTERNAL_URL if you use someone else's proxy)"
+_AUTH_MARKERS = (
+    "no connected db",
+    "authentication error",
+    "invalid proxy server token",
+    "invalid api key",
+    "api key not found",
+    "key not allowed",
+)
 
 
 @register_provider
@@ -43,7 +53,18 @@ class LiteLLMProvider(LLMProvider):
     name = "litellm"
     display_name = "LiteLLM"
     required_env = ("LITELLM_API_BASE", "LITELLM_API_KEY")
-    suggested_models = ("gpt-4.1-mini", "gpt-4o-mini", "gpt-4.1")
+    # Aliases defined in litellm/config.yaml (the live list comes from the proxy).
+    suggested_models = (
+        "gpt-4.1-mini",
+        "gpt-4.1",
+        "gpt-4.1-nano",
+        "gpt-4o-mini",
+        "gpt-5-mini",
+        "gpt-5.4-mini",
+        "gpt-5.5",
+        "gpt-5.6-luna",
+        "gpt-6-luna",
+    )
 
     def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None) -> None:
         super().__init__(settings)
@@ -154,15 +175,24 @@ class LiteLLMProvider(LLMProvider):
             self.display_name,
             model,
             f"cannot reach the LiteLLM proxy at {self.settings.litellm_api_base}: "
-            f"{type(exc).__name__}; is the litellm service running?",
+            f"{type(exc).__name__}. Check that the proxy is running and reachable from "
+            "the API (LITELLM_EXTERNAL_URL, or the bundled `litellm` container).",
         )
 
     def _http_error(self, resp: httpx.Response, model: str | None) -> ProviderError:
+        detail = error_detail(resp)
+        lowered = detail.lower()
+        # LiteLLM reports some key problems as HTTP 400 with a telling message
+        # (e.g. an unknown key on a proxy without a database: "No connected db").
+        if any(marker in lowered for marker in _AUTH_MARKERS):
+            return auth_error(self.display_name, model, ENV_HINT, resp.status_code)
+        if "budget" in lowered and "exceeded" in lowered:
+            return quota_error(self.display_name, model, resp.status_code)
         return error_from_status(
             self.display_name,
             model,
             resp.status_code,
-            error_detail(resp),
+            detail,
             ENV_HINT,
             retry_after_seconds(resp),
         )

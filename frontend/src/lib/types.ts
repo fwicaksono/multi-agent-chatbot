@@ -115,6 +115,7 @@ export interface Conversation {
 
 export interface ConversationDetail extends Conversation {
   messages: Message[];
+  summary: string | null; // the assistant's condensed memory of older messages
 }
 
 export interface ProviderInfo {

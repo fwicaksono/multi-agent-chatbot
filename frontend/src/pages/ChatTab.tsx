@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { Link, useOutletContext, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, FileText, MessageSquarePlus, PanelLeft, Repeat, Square, Trash2 } from "lucide-react";
+import { ArrowUp, Brain, FileText, MessageSquarePlus, PanelLeft, Repeat, Square, Trash2 } from "lucide-react";
 import { api, ApiError, streamChat } from "@/lib/api";
 import { keys, useConversation, useConversations, useUpdateAgent } from "@/lib/queries";
 import type { Message, Source } from "@/lib/types";
@@ -413,6 +413,22 @@ export function ChatTab() {
                   ))}
                 </div>
               </div>
+            )}
+
+            {conversation?.summary && (
+              <details className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-600 shadow-card">
+                <summary className="flex cursor-pointer items-center gap-2 font-medium text-slate-700">
+                  <Brain className="h-4 w-4 text-brand-600" aria-hidden />
+                  Earlier messages are summarised in the assistant's memory
+                </summary>
+                <p className="mt-2 text-xs text-slate-500">
+                  The most recent messages are remembered word for word; older ones are condensed into this summary,
+                  so long conversations stay remembered without growing the cost of each question.
+                </p>
+                <div className="mt-2 whitespace-pre-wrap rounded-lg bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-700">
+                  {conversation.summary}
+                </div>
+              </details>
             )}
 
             {messages.map((m, i) =>

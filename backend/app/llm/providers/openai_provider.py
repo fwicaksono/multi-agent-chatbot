@@ -33,7 +33,9 @@ from app.llm.errors import (
 from app.llm.registry import register_provider
 
 # Reasoning models reject `temperature`; we simply omit it for them.
-_REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5")
+# (Models not listed here that also reject it are detected and remembered at
+# runtime by LLMProvider, so new models work without a code change.)
+_REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-6")
 _CHAT_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4", "chatgpt-")
 
 
@@ -46,7 +48,17 @@ class OpenAIProvider(LLMProvider):
     name = "openai"
     display_name = "OpenAI"
     required_env = ("OPENAI_API_KEY",)
-    suggested_models = ("gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini", "gpt-4o", "gpt-5-mini")
+    suggested_models = (
+        "gpt-4.1-mini",
+        "gpt-4.1",
+        "gpt-4.1-nano",
+        "gpt-4o-mini",
+        "gpt-5-mini",
+        "gpt-5.4-mini",
+        "gpt-5.5",
+        "gpt-5.6-luna",
+        "gpt-6-luna",
+    )
 
     def __init__(self, settings: Settings, client: AsyncOpenAI | None = None) -> None:
         super().__init__(settings)

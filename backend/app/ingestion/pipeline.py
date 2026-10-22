@@ -21,6 +21,7 @@ from app.ingestion.errors import NoExtractableTextError, UnsupportedFileError
 from app.ingestion.extractors.base import ExtractedDocument, Extractor
 from app.ingestion.extractors.docx import DocxExtractor
 from app.ingestion.extractors.pdf import PdfExtractor
+from app.ingestion.language import detect_language
 
 StageCallback = Callable[[DocumentStage], Awaitable[None]]
 
@@ -32,6 +33,8 @@ class PreparedChunk:
     # short header naming its document and location ("contextual header").
     indexed_text: str
     embedding: list[float]
+    # PostgreSQL text-search configuration used for this chunk's keyword index.
+    language: str = "english"
 
 
 @dataclass(slots=True)
@@ -60,10 +63,12 @@ class IngestionPipeline:
         embedder: EmbeddingProvider,
         chunker: Chunker,
         extractors: dict[str, Extractor],
+        languages: list[str] | None = None,
     ) -> None:
         self.embedder = embedder
         self.chunker = chunker
         self.extractors = extractors
+        self.languages = languages or ["english"]
 
     @classmethod
     def from_settings(cls, settings: Settings, embedder: EmbeddingProvider) -> IngestionPipeline:
@@ -79,6 +84,7 @@ class IngestionPipeline:
                 ),
                 "docx": DocxExtractor(),
             },
+            languages=settings.fts_languages,
         )
 
     async def run(
@@ -114,7 +120,12 @@ class IngestionPipeline:
 
         return IngestionResult(
             chunks=[
-                PreparedChunk(chunk=c, indexed_text=t, embedding=v)
+                PreparedChunk(
+                    chunk=c,
+                    indexed_text=t,
+                    embedding=v,
+                    language=detect_language(c.text, self.languages),
+                )
                 for c, t, v in zip(chunks, indexed, embedded.vectors, strict=True)
             ],
             page_count=extracted.page_count,

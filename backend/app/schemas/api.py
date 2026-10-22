@@ -153,6 +153,8 @@ class MessageOut(ORMModel):
 
 class ConversationDetail(ConversationOut):
     messages: list[MessageOut]
+    # The assistant's condensed memory of older messages (None until needed).
+    summary: str | None = None
 
 
 class ChatRequestIn(BaseModel):

@@ -23,6 +23,7 @@ if TEST_DB:
     os.environ["DATABASE_URL"] = TEST_DB
     os.environ["EMBEDDING_DIMENSIONS"] = "1536"
     os.environ["EMBEDDED_WORKER"] = "false"
+    os.environ["FTS_LANGUAGES"] = "english,indonesian"  # independent of the local .env
 
 
 def pytest_collection_modifyitems(config, items):

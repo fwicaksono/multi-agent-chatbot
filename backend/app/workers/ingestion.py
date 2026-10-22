@@ -213,9 +213,7 @@ class IngestionWorker:
             await doc_repo.set_stage(session, document_id, DocumentStage.INDEXING)
             # Idempotent: never leave duplicates if the job ran more than once.
             await doc_repo.delete_chunks(session, document_id)
-            await chunk_repo.insert_chunks(
-                session, agent_id, document_id, result.chunks, self.settings.fts_language
-            )
+            await chunk_repo.insert_chunks(session, agent_id, document_id, result.chunks)
             await doc_repo.mark_ready(
                 session,
                 document_id,
@@ -249,6 +247,7 @@ def build_worker(settings: Settings | None = None) -> IngestionWorker:
 async def _main() -> None:
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_format)
+    await chunk_repo.verify_text_search_configs(settings.fts_languages)
     worker = build_worker(settings)
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):

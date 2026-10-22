@@ -44,7 +44,7 @@ async def _ingest(agent_id, path, file_type):
             sha256=path.name,
             storage_path=str(path),
         )
-        await chunk_repo.insert_chunks(s, agent_id, doc.id, result.chunks, settings.fts_language)
+        await chunk_repo.insert_chunks(s, agent_id, doc.id, result.chunks)
         await doc_repo.mark_ready(s, doc.id, chunk_count=len(result.chunks))
     return doc, embedder
 
@@ -73,7 +73,7 @@ async def test_keyword_search_finds_exact_terms():
     await _ingest(agent.id, SAMPLE_DATA / "legal" / "service_agreement_template.docx", "docx")
     async with session_scope() as s:
         hits = await chunk_repo.keyword_search(
-            s, agent.id, "BANI arbitration Jakarta", 5, "english"
+            s, agent.id, "BANI arbitration Jakarta", 5, ["english", "indonesian"]
         )
     assert hits and "Governing Law" in (hits[0].section or "")
 
@@ -147,3 +147,37 @@ async def test_worker_queue_claims_each_job_once():
             claimed.append(doc.filename if doc else None)
     assert sorted(c for c in claimed if c) == ["0.pdf", "1.pdf", "2.pdf"]
     assert claimed[-1] is None
+
+
+async def test_indonesian_chunks_are_stemmed_and_mixed_languages_work():
+    """Indonesian documents get Indonesian stemming; English ones keep English rules."""
+    agent = await _agent("Mixed")
+    await _ingest(agent.id, SAMPLE_DATA / "hr_id" / "peraturan_perusahaan.pdf", "pdf")
+    await _ingest(agent.id, SAMPLE_DATA / "hr" / "employee_handbook.pdf", "pdf")
+    langs = ["english", "indonesian"]
+
+    async with session_scope() as s:
+        languages = {
+            row.filename: row.language
+            for row in await s.execute(
+                select(Document.filename, Chunk.meta["language"].astext.label("language"))
+                .join(Chunk, Chunk.document_id == Document.id)
+                .where(Chunk.agent_id == agent.id)
+            )
+        }
+        # "mengundurkan" (question) and "pengunduran" (document) share the stem "undur".
+        resign = await chunk_repo.keyword_search(s, agent.id, "mengundurkan diri", 5, langs)
+        # "tahunan" in the question matches "tahunan"/"tahun" in the document.
+        leave_id = await chunk_repo.keyword_search(s, agent.id, "jatah cuti tahunan", 5, langs)
+        leave_en = await chunk_repo.keyword_search(s, agent.id, "annual leave carry over", 5, langs)
+        english_only = await chunk_repo.keyword_search(s, agent.id, "mengundurkan", 5, ["english"])
+
+    assert languages == {
+        "peraturan_perusahaan.pdf": "indonesian",
+        "employee_handbook.pdf": "english",
+    }
+    assert resign and resign[0].document_name == "peraturan_perusahaan.pdf"
+    assert resign[0].page_number == 1
+    assert leave_id and leave_id[0].document_name == "peraturan_perusahaan.pdf"
+    assert leave_en and leave_en[0].document_name == "employee_handbook.pdf"
+    assert english_only == []  # English rules cannot match "pengunduran" from "mengundurkan"

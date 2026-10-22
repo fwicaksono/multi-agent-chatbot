@@ -373,7 +373,7 @@ async def test_litellm_unreachable_proxy_has_actionable_message(settings):
         raise httpx.ConnectError("connection refused", request=request)
 
     provider = LiteLLMProvider(settings, client=mock_client(handler, "http://litellm.test"))
-    with pytest.raises(ProviderUnavailableError, match="litellm service running"):
+    with pytest.raises(ProviderUnavailableError, match="LITELLM_EXTERNAL_URL"):
         await provider.complete(REQUEST)
 
 
@@ -413,3 +413,79 @@ async def test_empty_choices_raise_a_clear_fallback_eligible_error(settings):
         with pytest.raises(ProviderError, match="empty response") as exc:
             await provider.complete(REQUEST)
         assert exc.value.fallback_eligible and not exc.value.retryable
+
+
+@pytest.mark.parametrize(
+    "external,expected",
+    [
+        (None, "http://litellm.test"),
+        ("", "http://litellm.test"),
+        ("https://llm.company.example/v1/", "https://llm.company.example"),
+        ("https://llm.company.example", "https://llm.company.example"),
+    ],
+)
+def test_external_litellm_url_replaces_the_bundled_proxy(external, expected):
+    from app.core.config import Settings
+
+    s = Settings(
+        _env_file=None, litellm_api_base="http://litellm.test", litellm_external_url=external
+    )
+    assert s.litellm_api_base == expected
+
+
+@pytest.mark.parametrize(
+    "status,message,error_cls",
+    [
+        (400, "No connected db.", ProviderAuthError),  # unknown key, proxy without DB
+        (401, "Authentication Error, Invalid proxy server token passed", ProviderAuthError),
+        (400, "Budget has been exceeded! Current cost: 5.2, Max budget: 5.0", ProviderQuotaError),
+    ],
+)
+async def test_litellm_key_problems_are_recognised(settings, status, message, error_cls):
+    settings.llm_max_retries = 0
+    provider = LiteLLMProvider(
+        settings,
+        client=mock_client(
+            lambda r: httpx.Response(status, json={"error": {"message": message}}),
+            "http://litellm.test",
+        ),
+    )
+    with pytest.raises(error_cls) as exc:
+        await provider.complete(REQUEST)
+    assert exc.value.fallback_eligible  # so the router moves on to the next provider
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+async def test_models_that_reject_temperature_are_retried_without_it(settings, streaming):
+    """Regression: new models (e.g. gpt-6-*) only accept the default temperature."""
+    seen = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        seen.append("temperature" in body)
+        if "temperature" in body:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Unsupported value: 'temperature' does not support 0.1.",
+                        "type": "invalid_request_error",
+                        "param": "temperature",
+                    }
+                },
+            )
+        if body.get("stream"):
+            return httpx.Response(
+                200, content=sse_body(["ok"]), headers={"content-type": "text/event-stream"}
+            )
+        return httpx.Response(200, json=completion_body("ok"))
+
+    provider = openai_provider(settings, handler)
+    req = ChatRequest("future-model-x", REQUEST.messages, temperature=0.1)
+    for _ in range(2):
+        if streaming:
+            text = collect_text([e async for e in provider.stream(req)])
+        else:
+            text = (await provider.complete(req)).content
+        assert text == "ok"
+    assert seen == [True, False, False], "tried once with temperature, then remembered"

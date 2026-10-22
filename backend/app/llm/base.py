@@ -10,12 +10,12 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import ClassVar, Literal, TypeVar
 
 from app.core.config import Settings
 from app.core.logging import get_logger
-from app.llm.errors import ProviderError, ProviderNotConfiguredError
+from app.llm.errors import ProviderBadRequestError, ProviderError, ProviderNotConfiguredError
 
 logger = get_logger(__name__)
 
@@ -107,6 +107,9 @@ class LLMProvider(ABC):
         self.timeout = settings.llm_timeout_seconds
         self.max_retries = settings.llm_max_retries
         self.retry_base_delay = settings.llm_retry_base_delay_seconds
+        # Models that rejected `temperature` (many reasoning models only accept
+        # the default). Learned at runtime so new models need no code change.
+        self._no_temperature: set[str] = set()
 
     # -- To implement -------------------------------------------------------
     @abstractmethod
@@ -129,7 +132,14 @@ class LLMProvider(ABC):
     # -- Public API ---------------------------------------------------------
     async def complete(self, request: ChatRequest) -> ChatResponse:
         self._ensure_configured(request.model)
-        return await self._with_retries(lambda: self._complete(request), request.model)
+        request = self._adapt(request)
+        try:
+            return await self._with_retries(lambda: self._complete(request), request.model)
+        except ProviderBadRequestError as exc:
+            if not self._rejects_temperature(request, exc):
+                raise
+            request = self._adapt(request)
+            return await self._with_retries(lambda: self._complete(request), request.model)
 
     async def stream(self, request: ChatRequest) -> AsyncIterator[StreamEvent]:
         """Stream a completion.
@@ -139,6 +149,7 @@ class LLMProvider(ABC):
         never emit duplicated text.
         """
         self._ensure_configured(request.model)
+        request = self._adapt(request)
         attempt = 0
         while True:
             emitted = False
@@ -147,11 +158,30 @@ class LLMProvider(ABC):
                     emitted = True
                     yield event
                 return
+            except ProviderBadRequestError as exc:
+                if emitted or not self._rejects_temperature(request, exc):
+                    raise
+                request = self._adapt(request)  # retry once without temperature
             except ProviderError as exc:
                 if emitted or not exc.retryable or attempt >= self.max_retries:
                     raise
                 attempt += 1
                 await self._sleep_before_retry(exc, attempt, request.model)
+
+    def _adapt(self, request: ChatRequest) -> ChatRequest:
+        if request.temperature is not None and request.model in self._no_temperature:
+            return replace(request, temperature=None)
+        return request
+
+    def _rejects_temperature(self, request: ChatRequest, exc: ProviderBadRequestError) -> bool:
+        """True (and remembered) when the model refused the temperature parameter."""
+        if request.temperature is None or "temperature" not in exc.message.lower():
+            return False
+        self._no_temperature.add(request.model)
+        logger.info(
+            "llm.temperature_unsupported", extra={"provider": self.name, "model": request.model}
+        )
+        return True
 
     def _ensure_configured(self, model: str | None) -> None:
         if not self.is_configured():

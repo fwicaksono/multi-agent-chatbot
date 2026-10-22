@@ -18,6 +18,7 @@ from app.core.errors import AppError
 from app.core.logging import configure_logging, get_logger, request_id_ctx
 from app.embeddings.base import get_embedding_provider
 from app.llm.registry import get_provider_factory
+from app.repositories.chunks import verify_text_search_configs
 
 logger = get_logger("app")
 
@@ -26,6 +27,7 @@ logger = get_logger("app")
 async def lifespan(app: FastAPI):
     settings = get_settings()
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
+    await verify_text_search_configs(settings.fts_languages)
     worker_task = None
     worker = None
     if settings.embedded_worker:

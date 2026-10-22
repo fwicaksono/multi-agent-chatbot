@@ -10,6 +10,7 @@ import type { WorkspaceContext } from "./AgentWorkspace";
 const KIND_LABELS: Record<string, string> = {
   chat: "Chat answers",
   query_rewrite: "Follow-up rewriting",
+  history_summary: "Conversation memory",
   embedding_query: "Query embeddings",
   embedding_ingest: "Document embeddings",
 };

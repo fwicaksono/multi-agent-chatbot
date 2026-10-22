@@ -166,6 +166,10 @@ class Conversation(TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False
     )
     title: Mapped[str] = mapped_column(String(200), nullable=False, default="New conversation")
+    # Rolling summary of the messages that no longer fit in the verbatim history
+    # window (CHAT_HISTORY_MESSAGES); covers every message up to `summary_until`.
+    summary: Mapped[str | None] = mapped_column(Text)
+    summary_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     messages: Mapped[list[Message]] = relationship(
         back_populates="conversation",

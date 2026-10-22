@@ -7,6 +7,7 @@ safe to publish. Run from the repository root:
 
 Outputs (in sample_data/):
     hr/employee_handbook.pdf            native-text PDF with headings and paragraphs
+    hr_id/peraturan_perusahaan.pdf      native-text PDF in Indonesian (company regulations)
     legal/service_agreement_template.docx  DOCX with title, headings, paragraphs, table
     legal/scanned_nda.pdf               image-only PDF (simulated scan) -> needs OCR
     invalid/corrupted.pdf               broken PDF  -> "could not be read" error
@@ -91,7 +92,8 @@ HANDBOOK = [
 ]
 
 
-def build_handbook_pdf(path: Path) -> None:
+def build_text_pdf(path: Path, items: list[tuple[str, str]], title: str, footer_text: str,
+                   page_label: str = "Page") -> None:
     styles = getSampleStyleSheet()
     style_map = {
         "h1": styles["Title"],
@@ -100,7 +102,7 @@ def build_handbook_pdf(path: Path) -> None:
         "p": ParagraphStyle("body", parent=styles["BodyText"], fontSize=10.5, leading=15),
     }
     story = []
-    for kind, text in HANDBOOK:
+    for kind, text in items:
         if kind == "break":
             story.append(PageBreak())
             continue
@@ -109,14 +111,73 @@ def build_handbook_pdf(path: Path) -> None:
 
     def footer(canvas, doc):
         canvas.setFont("Helvetica", 8)
-        canvas.drawString(2 * cm, 1.2 * cm, "Nusantara Digital - Employee Handbook v3.2")
-        canvas.drawRightString(A4[0] - 2 * cm, 1.2 * cm, f"Page {doc.page}")
+        canvas.drawString(2 * cm, 1.2 * cm, footer_text)
+        canvas.drawRightString(A4[0] - 2 * cm, 1.2 * cm, f"{page_label} {doc.page}")
 
     doc = SimpleDocTemplate(
-        str(path), pagesize=A4, title="Employee Handbook", author="Nusantara Digital",
+        str(path), pagesize=A4, title=title, author="Nusantara Digital",
         leftMargin=2.2 * cm, rightMargin=2.2 * cm, topMargin=2 * cm, bottomMargin=2 * cm,
     )
     doc.build(story, onFirstPage=footer, onLaterPages=footer)
+
+
+def build_handbook_pdf(path: Path) -> None:
+    build_text_pdf(path, HANDBOOK, "Employee Handbook", "Nusantara Digital - Employee Handbook v3.2")
+
+
+# --------------------------------------------------------------------------
+# 1b. Native-text PDF in Indonesian: company regulations (Indonesian HR agent)
+# --------------------------------------------------------------------------
+
+PERATURAN = [
+    ("h1", "PT Nusantara Digital - Peraturan Perusahaan"),
+    ("p", "Berlaku sejak 1 Januari 2026 untuk seluruh karyawan tetap dan karyawan kontrak. "
+          "Penanggung jawab: Divisi Sumber Daya Manusia (SDM)."),
+    ("h2", "Bab 1. Hubungan Kerja"),
+    ("p", "Setiap karyawan baru menjalani masa percobaan selama 3 bulan. Selama masa percobaan, "
+          "kinerja karyawan dinilai oleh atasan langsung bersama Divisi SDM."),
+    ("p", "Karyawan yang ingin mengakhiri hubungan kerja wajib menyampaikan surat pengunduran "
+          "diri secara tertulis paling lambat 30 hari sebelum tanggal pengunduran diri."),
+    ("h2", "Bab 2. Waktu Kerja dan Lembur"),
+    ("p", "Hari kerja adalah Senin sampai Jumat, pukul 08.00 sampai 17.00 WIB, dengan waktu "
+          "istirahat pukul 12.00 sampai 13.00 WIB."),
+    ("p", "Kerja lembur harus disetujui oleh atasan sebelum dilaksanakan. Upah lembur untuk jam "
+          "pertama dibayar sebesar satu setengah kali upah sejam, dan untuk setiap jam "
+          "berikutnya sebesar dua kali upah sejam."),
+    ("break", ""),
+    ("h2", "Bab 3. Cuti"),
+    ("h3", "3.1 Cuti Tahunan"),
+    ("p", "Karyawan yang telah bekerja selama 12 bulan berturut-turut berhak atas cuti tahunan "
+          "sebanyak 12 hari kerja dengan upah penuh. Sisa cuti paling banyak 6 hari dapat "
+          "dipindahkan ke tahun berikutnya dan hangus apabila tidak digunakan sampai 30 Juni."),
+    ("h3", "3.2 Cuti Sakit"),
+    ("p", "Karyawan yang sakit wajib memberitahu atasan pada hari yang sama. Ketidakhadiran "
+          "karena sakit lebih dari 1 hari wajib disertai surat keterangan dokter."),
+    ("h3", "3.3 Cuti Melahirkan dan Cuti Ayah"),
+    ("p", "Karyawan perempuan berhak atas cuti melahirkan selama 3 bulan, yaitu 1,5 bulan "
+          "sebelum dan 1,5 bulan sesudah melahirkan. Karyawan laki-laki berhak atas cuti ayah "
+          "selama 2 hari kerja ketika istrinya melahirkan."),
+    ("h3", "3.4 Cuti Alasan Penting"),
+    ("p", "Karyawan berhak atas cuti dengan upah penuh selama 3 hari untuk pernikahannya sendiri, "
+          "2 hari untuk pernikahan anak, dan 2 hari apabila anggota keluarga inti meninggal dunia."),
+    ("break", ""),
+    ("h2", "Bab 4. Pengupahan dan Tunjangan"),
+    ("p", "Gaji dibayarkan setiap tanggal 25. Apabila tanggal 25 jatuh pada hari libur, gaji "
+          "dibayarkan pada hari kerja sebelumnya."),
+    ("p", "Tunjangan Hari Raya (THR) keagamaan sebesar satu bulan gaji dibayarkan paling lambat "
+          "7 hari sebelum hari raya keagamaan masing-masing karyawan."),
+    ("p", "Untuk perjalanan dinas, karyawan menerima uang harian sebesar Rp350.000 per hari. "
+          "Laporan biaya perjalanan dinas diserahkan paling lambat 14 hari setelah kembali."),
+    ("h2", "Bab 5. Disiplin dan Sanksi"),
+    ("p", "Pelanggaran tata tertib dapat dikenai Surat Peringatan (SP). SP1, SP2 dan SP3 "
+          "masing-masing berlaku selama 6 bulan. Pelanggaran berat dapat mengakibatkan pemutusan "
+          "hubungan kerja."),
+]
+
+
+def build_peraturan_pdf(path: Path) -> None:
+    build_text_pdf(path, PERATURAN, "Peraturan Perusahaan",
+                   "PT Nusantara Digital - Peraturan Perusahaan 2026", page_label="Halaman")
 
 
 # --------------------------------------------------------------------------
@@ -305,9 +366,10 @@ def build_invalid_files(folder: Path) -> None:
 
 
 def main() -> None:
-    for sub in ("hr", "legal", "invalid"):
+    for sub in ("hr", "hr_id", "legal", "invalid"):
         (ROOT / sub).mkdir(parents=True, exist_ok=True)
     build_handbook_pdf(ROOT / "hr" / "employee_handbook.pdf")
+    build_peraturan_pdf(ROOT / "hr_id" / "peraturan_perusahaan.pdf")
     build_service_agreement_docx(ROOT / "legal" / "service_agreement_template.docx")
     build_scanned_nda_pdf(ROOT / "legal" / "scanned_nda.pdf")
     build_invalid_files(ROOT / "invalid")

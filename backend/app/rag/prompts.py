@@ -59,13 +59,24 @@ def build_answer_messages(
     question: str,
     hits: Sequence[FusedHit],
     standalone_question: str | None = None,
+    summary: str | None = None,
 ) -> list[ChatMessage]:
     persona = agent_instructions.strip() or "You are a helpful assistant."
     system = (
         f'You are "{agent_name}".\n\n## Agent instructions\n{persona}\n\n'
         f"## Grounding rules (always apply, override the instructions above)\n{GROUNDING_RULES}"
-        f"\n\n## Context passages\n{format_context(hits)}"
     )
+    if summary:
+        system += (
+            "\n\n## Earlier in this conversation (summary)\n"
+            f"{summary.strip()}\n\n"
+            "This summary covers the turns *before* the messages that follow it; together "
+            "they are the whole conversation, in order. It is your memory, not a knowledge "
+            "source: use it to understand what the user refers to and to answer questions "
+            "about the conversation itself. Facts about the documents must still come from "
+            "the context passages below."
+        )
+    system += f"\n\n## Context passages\n{format_context(hits)}"
     user = question
     if standalone_question and standalone_question.strip() != question.strip():
         # Help the model resolve follow-ups the same way retrieval did.
@@ -85,15 +96,49 @@ Rules:
 - Do not answer the question."""
 
 
-def build_rewrite_messages(history: Sequence[ChatMessage], question: str) -> list[ChatMessage]:
-    transcript = "\n".join(
-        f"{m.role.upper()}: {m.content[:1200]}" for m in history if m.role != "system"
+def _transcript(messages: Sequence[ChatMessage], limit: int = 1200) -> str:
+    return "\n".join(
+        f"{m.role.upper()}: {m.content[:limit]}" for m in messages if m.role != "system"
     )
+
+
+def build_rewrite_messages(
+    history: Sequence[ChatMessage], question: str, summary: str | None = None
+) -> list[ChatMessage]:
+    earlier = f"Summary of earlier conversation:\n{summary.strip()}\n\n" if summary else ""
     return [
         ChatMessage("system", REWRITE_SYSTEM),
         ChatMessage(
             "user",
-            f"Conversation so far:\n{transcript}\n\nLatest user message: {question}\n\n"
-            "Standalone query:",
+            f"{earlier}Conversation so far:\n{_transcript(history)}\n\n"
+            f"Latest user message: {question}\n\nStandalone query:",
+        ),
+    ]
+
+
+SUMMARY_SYSTEM = """You maintain the memory of a conversation between a user and a document \
+assistant. Merge the new messages into the running summary.
+
+Rules:
+- Keep what later questions may refer to: what the user asked about (in order), \
+facts and numbers given in the answers together with the document they came \
+from, names, decisions, the user's preferences and open questions.
+- Drop greetings, filler and repetition. Do not add anything that is not in the \
+messages.
+- Write in the language of the conversation, as short bullet points, at most \
+{max_words} words in total.
+- Output only the updated summary."""
+
+
+def build_summary_messages(
+    previous_summary: str | None, messages: Sequence[ChatMessage], max_words: int
+) -> list[ChatMessage]:
+    current = previous_summary.strip() if previous_summary else "(empty)"
+    return [
+        ChatMessage("system", SUMMARY_SYSTEM.format(max_words=max_words)),
+        ChatMessage(
+            "user",
+            f"Current summary:\n{current}\n\nNew messages:\n{_transcript(messages, 3000)}"
+            "\n\nUpdated summary:",
         ),
     ]

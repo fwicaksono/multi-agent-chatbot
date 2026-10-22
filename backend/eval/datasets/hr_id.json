@@ -1,0 +1,32 @@
+{
+  "agent": {
+    "name": "Eval - Agen SDM (ID)",
+    "description": "Asisten peraturan perusahaan berbahasa Indonesia (evaluasi)",
+    "instructions": "Anda adalah asisten SDM PT Nusantara Digital. Jawab dalam bahasa Indonesia berdasarkan peraturan perusahaan, sebutkan angka dan batas waktu secara tepat."
+  },
+  "documents": ["hr_id/peraturan_perusahaan.pdf"],
+  "questions": [
+    {"id": "id-01", "question": "Berapa lama masa percobaan untuk karyawan baru?", "expected": {"document": "peraturan_perusahaan.pdf", "page": 1}, "answer_keywords": ["3 bulan|tiga bulan"]},
+    {"id": "id-02", "question": "Kalau saya mau mengundurkan diri, berapa hari sebelumnya harus memberitahukan?", "expected": {"document": "peraturan_perusahaan.pdf", "page": 1}, "answer_keywords": ["30 hari|tiga puluh hari"]},
+    {"id": "id-03", "question": "Jam berapa waktu istirahat siang?", "expected": {"document": "peraturan_perusahaan.pdf", "page": 1}, "answer_keywords": ["12.00|12:00", "13.00|13:00"]},
+    {"id": "id-04", "question": "Berapa pembayaran lembur untuk jam kedua dan seterusnya?", "expected": {"document": "peraturan_perusahaan.pdf", "page": 1}, "answer_keywords": ["dua kali|2 kali"]},
+    {"id": "id-05", "question": "Berapa hari jatah cuti tahunan yang saya dapatkan?", "expected": {"document": "peraturan_perusahaan.pdf", "page": 2}, "answer_keywords": ["12 hari|dua belas hari"]},
+    {"id": "id-06", "question": "Sampai kapan sisa cuti bisa dipakai sebelum hangus?", "expected": {"document": "peraturan_perusahaan.pdf", "page": 2}, "answer_keywords": ["30 juni"]},
+    {"id": "id-07", "question": "Kapan saya perlu membawa surat dokter waktu sakit?", "expected": {"document": "peraturan_perusahaan.pdf", "page": 2}, "answer_keywords": ["1 hari|satu hari"]},
+    {"id": "id-08", "question": "Berapa lama cuti untuk karyawan yang melahirkan?", "expected": {"document": "peraturan_perusahaan.pdf", "page": 2}, "answer_keywords": ["3 bulan|tiga bulan"]},
+    {"id": "id-09", "question": "Suami mendapat cuti berapa hari ketika istrinya melahirkan?", "expected": {"document": "peraturan_perusahaan.pdf", "page": 2}, "answer_keywords": ["2 hari|dua hari"]},
+    {"id": "id-10", "question": "Berapa hari cuti yang diberikan kalau saya menikah?", "expected": {"document": "peraturan_perusahaan.pdf", "page": 2}, "answer_keywords": ["3 hari|tiga hari"]},
+    {"id": "id-11", "question": "Tanggal berapa gaji ditransfer setiap bulan?", "expected": {"document": "peraturan_perusahaan.pdf", "page": 3}, "answer_keywords": ["25"]},
+    {"id": "id-12", "question": "Kapan THR dibayar?", "expected": {"document": "peraturan_perusahaan.pdf", "page": 3}, "answer_keywords": ["7 hari|tujuh hari"]},
+    {"id": "id-13", "question": "Berapa uang harian untuk dinas ke luar kota?", "expected": {"document": "peraturan_perusahaan.pdf", "page": 3}, "answer_keywords": ["350.000|350,000"]},
+    {"id": "id-14", "question": "Berapa lama masa berlaku surat peringatan?", "expected": {"document": "peraturan_perusahaan.pdf", "page": 3}, "answer_keywords": ["6 bulan|enam bulan"]},
+    {"id": "id-15", "question": "Kapan laporan biaya perjalanan dinas paling lambat diserahkan?", "expected": {"document": "peraturan_perusahaan.pdf", "page": 3}, "answer_keywords": ["14 hari|empat belas hari"]},
+    {"id": "id-16", "question": "Berapa besar tunjangan transportasi bulanan?", "answerable": false},
+    {"id": "id-17", "question": "Apakah keluarga karyawan ditanggung asuransi kesehatan?", "answerable": false},
+    {"id": "id-18", "question": "Berapa denda keterlambatan pembayaran invoice dari klien?", "answerable": false, "note": "Legal knowledge - must not leak into HR"}
+  ],
+  "conversations": [
+    {"id": "id-mt-1", "turns": ["Berapa hari cuti tahunan karyawan?", "Kalau cuti melahirkan?"], "final_keywords": ["3 bulan|tiga bulan"]},
+    {"id": "id-mt-2", "turns": ["Bagaimana aturan upah lembur?", "Lalu kalau mau mengundurkan diri?"], "final_keywords": ["30 hari|tiga puluh hari"]}
+  ]
+}

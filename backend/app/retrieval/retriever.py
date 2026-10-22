@@ -60,7 +60,7 @@ class HybridRetriever:
 
         if mode in ("hybrid", "keyword"):
             keyword_hits = await chunk_repo.keyword_search(
-                session, agent_id, query, candidates, s.fts_language
+                session, agent_id, query, candidates, s.fts_languages
             )
 
         fused = reciprocal_rank_fusion(vector_hits, keyword_hits, k=s.retrieval_rrf_k)

@@ -77,6 +77,7 @@ async def get_conversation(
         updated_at=conv.updated_at,
         message_count=len(messages),
         messages=messages,
+        summary=conv.summary,
     )
 
 

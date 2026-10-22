@@ -48,6 +48,8 @@ docker compose up --build
 
 Compose starts five services: `db` (PostgreSQL 17 + pgvector), `litellm` (LiteLLM proxy), `api` (FastAPI; it applies database migrations on start), `worker` (document ingestion) and `web` (nginx serving the React app and proxying `/api`). Data is stored in named volumes (`pgdata`, `uploads`), so agents, documents and conversations survive restarts and `docker compose down`. Use `docker compose down -v` to wipe all data.
 
+**Demo agents:** `python3 scripts/seed_demo_agents.py` creates three agents with their sample documents, one per provider: *Agent HR* (OpenAI), *Agent Legal* (LiteLLM) and *Agen SDM (Bahasa Indonesia)* (OpenRouter, with LiteLLM as its fallback, so with no valid OpenRouter key every answer demonstrates automatic fallback). It is safe to re-run, and `--api … --user admin` works against the production site.
+
 **Try it in 2 minutes:** create an agent, open **Knowledge**, drop in `sample_data/hr/employee_handbook.pdf`, wait for **Ready**, then ask questions in **Chat**. The `sample_data/invalid/` folder holds broken files that show the error handling.
 
 ---
@@ -116,8 +118,10 @@ flowchart LR
 1. `POST /api/conversations/{id}/messages` validates the request and **persists the user message before streaming starts**, so a bad id returns a normal 404 instead of a broken stream.
 2. **Rewrite.** If the conversation has history, the agent's LLM turns the follow-up into a standalone query ("What about the NDA then?" becomes "How long does the NDA remain in force?"). If this step fails, the original question is used.
 3. **Retrieve**, filtered to the agent's own chunks: an HNSW cosine search (pgvector) and a Postgres full-text search run, and their rankings are merged with Reciprocal Rank Fusion. The top 6 passages are kept, and vector-only matches below a similarity floor are dropped.
-4. **Generate.** The system prompt is the agent's instructions, followed by non-negotiable grounding rules, followed by the numbered passages. The recent history and the question come after it. Tokens stream to the browser over Server-Sent Events. If the provider fails before the first token, the router falls back to the next provider in the chain.
+4. **Generate.** The system prompt is the agent's instructions, followed by non-negotiable grounding rules, the conversation summary (if any) and the numbered passages. The recent history and the question come after it. Tokens stream to the browser over Server-Sent Events. If the provider fails before the first token, the router falls back to the next provider in the chain.
 5. **Cite and persist.** `[n]` markers are parsed into citations. The answer, citations, consulted sources, provider/model actually used, fallback events, tokens, cost and latency are stored. Usage records are written per agent.
+
+**Conversation memory.** The model sees the last `CHAT_HISTORY_MESSAGES` messages word for word. After each answer, messages that have left that window are folded into a rolling summary in the background, using the agent's own model. The summary is stored on the conversation, always included in the prompt, and shown in the chat as a collapsible "memory" note. If a summary isn't ready yet (or failed), the not-yet-summarised messages are sent verbatim, so nothing is silently forgotten. That fallback is capped at one extra window, so prompts stay bounded even if summarising keeps failing. A long backlog (for example memory switched on for an existing conversation) is summarised in token-bounded batches (~6k tokens per call) until it has caught up. Follow-up rewriting sees only the last 6 messages plus the summary, so a large window doesn't multiply its cost. Concurrent summary updates are resolved optimistically: a stale update never overwrites a newer one.
 
 SSE events: `meta` → `rewrite`? → `sources` → `fallback`* → `token`* → `done` | `error`. If the client disconnects mid-answer (tab closed or *Stop*), the partial answer is saved with status `cancelled`, together with its estimated token usage. `?stream=false` returns the final payload as JSON, which the evaluation script uses.
 
@@ -176,6 +180,7 @@ deploy/Caddyfile     production reverse proxy (HTTPS + basic auth), used by dock
 
 - `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL` are **global**; chat provider and model are **per agent**. Vectors in the index and the query vector must come from the same model. If embeddings followed each agent's chat provider, switching from OpenAI to OpenRouter (requirement 6) would silently invalidate the whole knowledge base. Decoupling the two makes provider switches free.
 - Default: **OpenAI `text-embedding-3-small` (1536-d)**. It is cheap ($0.02 / 1M tokens), strong on English and Indonesian, and the user already has the key. `EMBEDDING_PROVIDER=litellm` routes embeddings through the LiteLLM proxy instead, for example to a self-hosted model, with no code change.
+- **Measured, not assumed:** the same evaluation with `text-embedding-3-large` (shortened to 1536 dimensions, so it fits the same column and HNSW index) was not better on this corpus. Hybrid Hit@1 was HR 0.93 vs 1.00 with small, Indonesian 0.87 vs 0.93, Legal 1.00 vs 1.00, at 6.5× the price. File type doesn't matter here: PDF, DOCX and OCR all become plain text before embedding. Switching is a `.env` change (`EMBEDDING_MODEL=text-embedding-3-large`) plus re-processing the documents.
 - Trade-off: changing the embedding model or dimension requires re-indexing. Each document records its `embedding_model`, and **Retry** re-processes a document. Changing `EMBEDDING_DIMENSIONS` needs a fresh database because the vector column is sized.
 
 ### Vector store: PostgreSQL + pgvector (plus Postgres full-text)
@@ -190,6 +195,8 @@ deploy/Caddyfile     production reverse proxy (HTTPS + basic auth), used by dock
 
 ### Hybrid search: vector + keyword, fused with RRF
 
+**Languages (English + Indonesian).** Keyword search needs language rules: a stemmer ("tahunan" → "tahun", "mengundurkan"/"pengunduran" → "undur") and stop words. Each chunk is indexed with the PostgreSQL configuration of its detected language (stop-word frequency, `app/ingestion/language.py`), and questions are matched against all languages in `FTS_LANGUAGES`, so English and Indonesian documents can be mixed. PostgreSQL's `indonesian` configuration has no stop-word list, so the app removes Indonesian and English stop words from questions itself. Semantic search and the answers are multilingual already (OpenAI embeddings; the model replies in the user's language).
+
 Dense vectors catch paraphrases ("time off" ≈ "annual leave"). Full-text search catches exact tokens that embeddings blur: clause numbers, names, "BANI". The two rankings are fused with **Reciprocal Rank Fusion**, which uses only ranks, so cosine similarity and `ts_rank` never need normalising onto one scale. Keyword queries use OR semantics over the question's terms (stop words are dropped by Postgres) rather than `websearch_to_tsquery`'s AND, which is too strict for natural-language questions. The evaluation shows hybrid beating either mode alone on Hit@1 (§5).
 
 ### Provider abstraction (requirements P1 to P4)
@@ -197,12 +204,24 @@ Dense vectors catch paraphrases ("time off" ≈ "annual leave"). Full-text searc
 - **`LLMProvider` (app/llm/base.py)** is the single interface: `complete()`, `stream()`, `list_models()`, `is_configured()`. Providers implement small `_complete` / `_stream` hooks. Shared behaviour (configuration check, retry with exponential back-off honouring `Retry-After`, never retrying after the first streamed token) lives once in the base class.
 - **One module per provider** under `app/llm/providers/`, each registered with `@register_provider`. The registry **auto-discovers** every module in that package. **Adding a fourth provider means adding one file**; chat, retrieval, router and API code never import a concrete provider. A unit test registers an extra provider at runtime and routes a request through it to prove this.
 - **The implementations are independent:**
-  - **OpenAI**: the official `openai` SDK. It handles reasoning models (omits `temperature`, uses `max_completion_tokens`) and reads usage from the final stream chunk.
+  - **OpenAI**: the official `openai` SDK. It handles reasoning models (omits `temperature`, uses `max_completion_tokens`) and reads usage from the final stream chunk. A model that rejects `temperature` (for example the `gpt-6-*` family) is retried once without it and remembered, in the shared base class, so new models work on every provider without a code change.
   - **LiteLLM**: a client for the **LiteLLM Proxy (gateway)** over HTTP, with its own endpoint, master key, model aliases from `litellm/config.yaml`, and cost from the `x-litellm-response-cost` header. It does not subclass or call the OpenAI or OpenRouter providers; a test asserts this. Running LiteLLM as a gateway service is how it is typically deployed in production (central keys, routing, budgets), and it also avoids pulling the large `litellm` SDK into the API image.
   - **OpenRouter**: a client for the OpenRouter REST API, with attribution headers, `usage.include` for exact billed cost, handling of errors sent inside the SSE stream, and the public model catalogue with prices.
 - **Error taxonomy (requirement T8).** Every provider maps vendor errors to `ProviderAuthError`, `ProviderRateLimitError`, `ProviderQuotaError`, `ProviderTimeoutError`, `ProviderUnavailableError`, `ModelNotFoundError`, `ProviderBadRequestError` or `ProviderNotConfiguredError`. Each error carries an actionable message (for example "OpenAI rejected the API key … Check OPENAI_API_KEY in your .env file and restart the services") and is logged with structured fields and the underlying cause.
 - **Fallback (bonus B5).** `LLMRouter` walks the chain: the agent's provider → the agent's optional fallback → `LLM_FALLBACK_CHAIN`. It moves on for fallback-eligible errors and not for a malformed request. For streams, it falls back **only before the first token**, so it never splices two models' answers together. The UI shows a notice such as "OpenRouter failed — switched to OpenAI (gpt-4.1-mini)".
 - **Why no LangChain or LlamaIndex:** the requirement asks for a custom provider abstraction, and the RAG flow is a few hundred lines that are easy to explain and test end-to-end. A framework would add indirection without removing much code.
+
+### Chat model choice
+
+The default is **`gpt-4.1-mini`**: fast (~1.4 s per answer), cheap, strong at following the grounding and citation rules, and it scored 100% on answers and citations in the evaluation. Any model can be chosen per agent. The model picker lists the provider's live models, and the bundled LiteLLM proxy exposes the same OpenAI models. Results from the same 54-question evaluation:
+
+| Model | Answers | Citations | Refusals (HR / Legal / ID) | Multi-turn | Notes |
+|---|---|---|---|---|---|
+| `gpt-4.1-mini` (default) | 100% | 100% | 100 / 100 / 67% | 100% | Known price; the Indonesian refusals sometimes still cite a related passage |
+| `gpt-5.6-luna` | 100% | 100% | 100 / 100 / 100% | 50% HR, 100% others | One follow-up misread; price not in the app's table yet |
+| `gpt-6-luna` | 100% | 100% | 100 / 100 / 100% | 100% | Best scores; slightly slower (~1.7 s); price not in the app's table yet |
+
+The corpus is small, so differences come down to one or two questions. Prices for models the app doesn't know yet can be added with `MODEL_PRICING_OVERRIDES` (otherwise their cost shows as unpriced).
 
 ### Grounding and "I don't know" (requirements C2, C3)
 
@@ -263,14 +282,16 @@ All configuration comes from environment variables, loaded from `.env`. `.env.ex
 |---|---|---|
 | `OPENAI_API_KEY` / `OPENROUTER_API_KEY` | – | Provider credentials (never committed; `.env` is git-ignored) |
 | `LITELLM_API_BASE` / `LITELLM_API_KEY` | `http://localhost:4000` (compose overrides it with `http://litellm:4000`) / `sk-litellm-change-me` | LiteLLM proxy endpoint and master key (set your own key) |
+| `LITELLM_EXTERNAL_URL` | empty | URL of someone else's LiteLLM proxy (e.g. your company's; with or without `/v1`). When set it replaces the bundled `litellm` container; put the key they gave you in `LITELLM_API_KEY`. Their models appear in the model picker automatically |
 | `DEFAULT_LLM_PROVIDER` / `DEFAULT_LLM_MODEL` | `openai` / `gpt-4.1-mini` | Prefilled when creating an agent |
 | `LLM_FALLBACK_CHAIN` | `openai:gpt-4.1-mini,litellm:gpt-4o-mini` | Global fallback order after the agent's own providers |
 | `LLM_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` | `60` / `2` | Per-call timeout; retries for rate limits, timeouts and outages |
 | `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL` / `EMBEDDING_DIMENSIONS` | `openai` / `text-embedding-3-small` / `1536` | Global embedding settings |
 | `CHUNK_SIZE_TOKENS` / `CHUNK_OVERLAP_TOKENS` | `450` / `60` | Chunking |
-| `RETRIEVAL_TOP_K` / `RETRIEVAL_MIN_SIMILARITY` / `FTS_LANGUAGE` | `6` / `0.2` / `english` | Retrieval (`simple` = language-neutral full-text search) |
+| `RETRIEVAL_TOP_K` / `RETRIEVAL_MIN_SIMILARITY` / `FTS_LANGUAGES` | `6` / `0.2` / `english,indonesian` | Retrieval. Each chunk is keyword-indexed in its detected language; after changing the languages run `python -m app.workers.rebuild_keyword_index` |
 | `OCR_ENABLED` / `OCR_LANGUAGES` | `true` / `eng+ind` | Tesseract OCR for image-only pages |
-| `CHAT_HISTORY_MESSAGES` / `QUERY_REWRITE_ENABLED` | `10` / `true` | Multi-turn context |
+| `CHAT_HISTORY_MESSAGES` / `QUERY_REWRITE_ENABLED` | `10` / `true` | Multi-turn context: the latest messages sent word for word |
+| `CHAT_SUMMARY_ENABLED` / `CHAT_SUMMARY_MAX_TOKENS` | `true` / `400` | Older messages are condensed into a rolling summary that is always sent, so long conversations stay remembered at a fixed cost |
 | `MAX_UPLOAD_MB` / `MAX_FILES_PER_UPLOAD` | `25` / `20` | Upload limits |
 | `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `json` | `console` gives readable local logs |
 
@@ -284,13 +305,13 @@ To **add models to LiteLLM** (for example Anthropic, Gemini or a local Ollama), 
 # Backend (Python 3.12, uv)
 cd backend
 uv sync                                    # installs runtime + dev deps
-uv run pytest                              # 83 unit tests; integration tests skip without a DB
+uv run pytest                              # 96 unit tests; integration tests skip without a DB
 uv run ruff check . && uv run ruff format --check .
 
 # Integration tests: real PostgreSQL + pgvector (isolation, cascade deletes, full API flow)
 docker run -d --name pg-test -e POSTGRES_USER=chatbot -e POSTGRES_PASSWORD=chatbot -e POSTGRES_DB=chatbot_test \
   -p 55432:5432 pgvector/pgvector:0.8.0-pg17
-TEST_DATABASE_URL=postgresql+asyncpg://chatbot:chatbot@localhost:55432/chatbot_test uv run pytest   # 99 tests
+TEST_DATABASE_URL=postgresql+asyncpg://chatbot:chatbot@localhost:55432/chatbot_test uv run pytest   # 120 tests
 
 # Run the API locally against that DB (worker embedded in the API process)
 DATABASE_URL=postgresql+asyncpg://chatbot:chatbot@localhost:55432/chatbot_test EMBEDDED_WORKER=true \
@@ -349,10 +370,10 @@ Interactive docs are at **`/api/docs`**. Summary:
 ## 10. Limitations and future work
 
 - **Auth and multi-tenancy:** users and organisations, role-based access per agent, and per-tenant rate limits.
-- **Retrieval quality:** add a cross-encoder reranker (for example Cohere Rerank or `bge-reranker`) after RRF; tune `ef_search`; use parent/neighbour-chunk expansion for long clauses; add an Indonesian stemmer for full-text search (Postgres has no built-in Indonesian configuration).
+- **Retrieval quality:** add a cross-encoder reranker (for example Cohere Rerank or `bge-reranker`) after RRF; tune `ef_search`; use parent/neighbour-chunk expansion for long clauses; give rare terms more weight in keyword ranking (PostgreSQL's `ts_rank` has no IDF, so very common words such as "hari" can outweigh specific ones).
 - **Evaluation:** a larger, noisier public corpus (real handbooks and contract templates); LLM-as-judge for faithfulness and completeness; run the eval in CI on every prompt or model change; track regressions over time.
 - **Ingestion:** layout-aware PDF parsing (tables, multi-column layouts, headers and footers), PDF heading detection for section citations, more formats (PPTX, HTML, TXT), streaming uploads to object storage (S3/GCS behind the same `FileStorage` interface), and a real queue (for example Redis/Arq) at higher throughput.
-- **Chat:** token-budgeted history (summarise old turns instead of a fixed window); conversation export.
+- **Chat:** conversation export; long-term memory shared across conversations (today each conversation remembers only itself).
 - **Operations:** OpenTelemetry tracing and metrics (latency per stage, provider error rates), an alert when fallback is used frequently, and budget limits per agent built on the usage table.
 - **Cloud demo (bonus B7):** the production configuration is included and tested locally (§12), but no public demo link is provided. Beyond a single server, the next step is a managed Postgres with pgvector (an RDS override is included), a container service for api, worker and web, and a secret manager for keys.
 
@@ -410,7 +431,7 @@ To use **Amazon RDS for PostgreSQL** instead of the bundled database container, 
 | **C1** Select an agent and chat | Chat tab, conversations API | Integration test; UI |
 | **C2** Grounded answers citing document + page/section | `rag/prompts.py`, `rag/citations.py`, source panel | Eval citation accuracy 100% |
 | **C3** "I don't know" instead of inventing | Grounding rules; no-documents short-circuit | Eval abstention accuracy 100%; integration test |
-| **C4** Multi-turn follow-ups | History + query rewriting (`services/chat.py`) | Eval multi-turn 100%; integration test |
+| **C4** Multi-turn follow-ups | Recent history + rolling summary of older turns + query rewriting (`services/chat.py`) | Eval multi-turn 100%; `test_memory.py` |
 | **P1** OpenAI, LiteLLM, OpenRouter | `llm/providers/*.py` | `test_llm_providers` |
 | **P2** Provider/model per agent, switchable without code changes | Agent fields; chat-header switcher; PATCH | Integration test (switch, then chat with history intact) |
 | **P3** Own abstraction; 4th provider without touching chat/retrieval | `LLMProvider` + auto-discovered registry | `test_fourth_provider_plugs_in_without_touching_core` |
@@ -418,7 +439,7 @@ To use **Amazon RDS for PostgreSQL** instead of the bundled database container, 
 | **P5** Embedding provider separate from chat provider | `embeddings/` (global setting); README §4 | Configuration + docs |
 | **P6** Keys only from environment, never committed | `core/config.py` (`SecretStr`); `.env` git-ignored | Secret scan of the git history |
 | **T1–T6** FastAPI, UI, persistent vector store, `docker compose up`, `.env` / `.env.example` | See §1, §3, §6 | `docker compose up --build` from a clean checkout |
-| **T7** Unit tests for ingestion and the provider abstraction | `backend/tests/unit` | 83 unit tests |
+| **T7** Unit tests for ingestion and the provider abstraction | `backend/tests/unit` | 96 unit tests |
 | **T8** Clear errors and logs for timeouts, rate limits, bad keys | `llm/errors.py`, retries, JSON logs | Provider error tests; `llm.retry` / `llm.fallback` logs |
 | **T9** Public, non-confidential data | Fictional generated documents | `scripts/generate_sample_data.py` |
 | **B1** Streaming | SSE end to end (nginx and Caddy unbuffered) | UI + streaming tests |
