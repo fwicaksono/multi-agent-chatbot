@@ -184,8 +184,27 @@ deploy/Caddyfile     production reverse proxy (HTTPS + basic auth), used by dock
 
 - `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL` are **global**; chat provider and model are **per agent**. Vectors in the index and the query vector must come from the same model. If embeddings followed each agent's chat provider, switching from OpenAI to OpenRouter (requirement 6) would silently invalidate the whole knowledge base. Decoupling the two makes provider switches free.
 - Default: **OpenAI `text-embedding-3-small` (1536-d)**. It is cheap ($0.02 / 1M tokens), strong on English and Indonesian, and the user already has the key. `EMBEDDING_PROVIDER=litellm` routes embeddings through the LiteLLM proxy instead, for example to a self-hosted model, with no code change.
-- **Measured, not assumed:** the same evaluation with `text-embedding-3-large` (shortened to 1536 dimensions, so it fits the same column and HNSW index) was not better on this corpus. Hybrid Hit@1 was HR 0.93 vs 1.00 with small, Indonesian 0.87 vs 0.93, Legal 1.00 vs 1.00, at 6.5× the price. File type doesn't matter here: PDF, DOCX and OCR all become plain text before embedding. Switching is a `.env` change (`EMBEDDING_MODEL=text-embedding-3-large`) plus re-processing the documents.
 - Trade-off: changing the embedding model or dimension requires re-indexing. Each document records its `embedding_model`, and **Retry** re-processes a document. Changing `EMBEDDING_DIMENSIONS` needs a fresh database because the vector column is sized.
+
+#### Why the small embedding model: tested, no improvement from the larger one
+
+The obvious question is whether the larger `text-embedding-3-large` would retrieve better, given the mix of PDF, DOCX and scanned documents. It was **tested rather than assumed**: the full evaluation (§5: 54 questions across the English HR, Legal and Indonesian agents) was run with each model, re-ingesting the same documents.
+
+| Right passage ranked first (Hit@1) | `text-embedding-3-small` (chosen) | `text-embedding-3-large` |
+|---|---|---|
+| HR, semantic search | **0.93** | 0.87 |
+| HR, hybrid | **1.00** | 0.93 |
+| Indonesian, semantic search | **0.93** | 0.87 |
+| Indonesian, hybrid | **0.93** | 0.87 |
+| Legal, semantic search | 0.93 | **1.00** |
+| Legal, hybrid | 1.00 | 1.00 |
+| Answer accuracy (all agents) | 100% | 100% |
+| Price per 1M tokens | **$0.02** | $0.13 (6.5×) |
+
+The large model was better on Legal, worse on HR and Indonesian, and identical in final answer quality, at 6.5× the price. On this corpus the difference is noise (one or two questions out of 15 per agent), so **the small model is kept**.
+
+- **Document format does not matter for this choice.** PDF, DOCX and OCR'd scans are all converted to plain text before embedding. What drives retrieval quality here is chunking, the contextual header and hybrid search, which already give hybrid Hit@1 of 0.93–1.00.
+- **Switching later is cheap.** `text-embedding-3-large` can be shortened to 1536 dimensions, so it fits the existing column and HNSW index. Set `EMBEDDING_MODEL=text-embedding-3-large` and re-process the documents; no schema change is needed. It would be worth re-testing on a larger, noisier real corpus, where the bigger model's advantage tends to show.
 
 ### Vector store: PostgreSQL + pgvector (plus Postgres full-text)
 
