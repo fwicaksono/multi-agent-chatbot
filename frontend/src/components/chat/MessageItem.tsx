@@ -9,6 +9,7 @@ import { cn, formatCost, formatNumber, providerLabel } from "@/lib/format";
 export interface AssistantView {
   content: string;
   status: "streaming" | "complete" | "error";
+  stopped?: boolean; // saved after the user stopped it (or closed the tab) mid-answer
   phase?: "thinking" | "searching" | "writing";
   citations: Source[];
   sources: Source[];
@@ -151,6 +152,12 @@ export function AssistantMessage({
               {streaming && <span className="ml-0.5 inline-block h-4 w-1.5 animate-blink bg-brand-500 align-text-bottom" aria-hidden />}
             </div>
           ) : null}
+
+          {view.stopped && (
+            <p className={cn("text-xs italic text-slate-500", view.content && "mt-2")}>
+              Stopped before the answer was complete.
+            </p>
+          )}
 
           {view.status === "error" && view.error && (
             <div

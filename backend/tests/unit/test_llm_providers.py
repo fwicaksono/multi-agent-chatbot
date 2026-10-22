@@ -394,3 +394,22 @@ async def test_litellm_is_independent_of_other_providers():
     # LiteLLM must not be implemented as a wrapper around another provider class.
     assert not issubclass(LiteLLMProvider, OpenAIProvider | OpenRouterProvider)
     assert LiteLLMProvider.__mro__[1].__name__ == "LLMProvider"
+
+
+async def test_empty_choices_raise_a_clear_fallback_eligible_error(settings):
+    from app.llm.errors import ProviderError
+
+    settings.llm_max_retries = 0
+    filtered = {**completion_body(), "choices": []}
+    openai_p = openai_provider(settings, lambda r: httpx.Response(200, json=filtered))
+    router_p = OpenRouterProvider(
+        settings,
+        client=mock_client(lambda r: httpx.Response(200, json=filtered), "https://or.test"),
+    )
+    litellm_p = LiteLLMProvider(
+        settings, client=mock_client(lambda r: httpx.Response(200, json=filtered), "http://l.test")
+    )
+    for provider in (openai_p, router_p, litellm_p):
+        with pytest.raises(ProviderError, match="empty response") as exc:
+            await provider.complete(REQUEST)
+        assert exc.value.fallback_eligible and not exc.value.retryable

@@ -22,7 +22,7 @@ router = APIRouter(prefix="/agents/{agent_id}/documents", tags=["documents"])
 
 @router.get("", response_model=list[DocumentOut])
 async def list_documents(
-    agent_id: uuid.UUID, session: AsyncSession = Depends(get_db)
+    agent_id: uuid.UUID, session: AsyncSession = Depends(get_db, scope="function")
 ) -> list[DocumentOut]:
     await agent_service.get_or_404(session, agent_id)
     return [DocumentOut.model_validate(d) for d in await doc_repo.list_documents(session, agent_id)]
@@ -32,7 +32,7 @@ async def list_documents(
 async def upload_documents(
     agent_id: uuid.UUID,
     files: list[UploadFile] = File(..., description="One or more PDF/DOCX files"),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
     storage: FileStorage = Depends(get_storage),
     settings: Settings = Depends(settings_dep),
 ) -> UploadResult:
@@ -43,14 +43,18 @@ async def upload_documents(
 
 @router.get("/{document_id}", response_model=DocumentOut)
 async def get_document(
-    agent_id: uuid.UUID, document_id: uuid.UUID, session: AsyncSession = Depends(get_db)
+    agent_id: uuid.UUID,
+    document_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DocumentOut:
     return DocumentOut.model_validate(await doc_service.get_or_404(session, agent_id, document_id))
 
 
 @router.get("/{document_id}/file")
 async def download_document(
-    agent_id: uuid.UUID, document_id: uuid.UUID, session: AsyncSession = Depends(get_db)
+    agent_id: uuid.UUID,
+    document_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db, scope="function"),
 ) -> FileResponse:
     """Serve the original file inline (PDF citations deep-link with #page=N)."""
     doc = await doc_service.get_or_404(session, agent_id, document_id)
@@ -64,7 +68,9 @@ async def download_document(
 
 @router.post("/{document_id}/reprocess", response_model=DocumentOut)
 async def reprocess_document(
-    agent_id: uuid.UUID, document_id: uuid.UUID, session: AsyncSession = Depends(get_db)
+    agent_id: uuid.UUID,
+    document_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db, scope="function"),
 ) -> DocumentOut:
     return DocumentOut.model_validate(await doc_service.reprocess(session, agent_id, document_id))
 
@@ -73,7 +79,7 @@ async def reprocess_document(
 async def delete_document(
     agent_id: uuid.UUID,
     document_id: uuid.UUID,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
     storage: FileStorage = Depends(get_storage),
 ) -> Response:
     await doc_service.delete(session, storage, agent_id, document_id)

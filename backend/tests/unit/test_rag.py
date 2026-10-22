@@ -147,3 +147,15 @@ async def test_iterative_scan_only_on_pgvector_0_8_plus(monkeypatch, version, ex
 
     monkeypatch.setattr(chunks, "_iterative_scan_supported", None)
     assert await chunks._supports_iterative_scan(FakeSession()) is expected
+
+
+def test_history_citation_markers_are_stripped_but_not_other_brackets():
+    from app.rag.citations import strip_citation_markers
+
+    assert (
+        strip_citation_markers("Leave is 18 days [1]. Carry over 5 [2, 3] or [4-5].")
+        == "Leave is 18 days. Carry over 5 or."
+    )
+    assert strip_citation_markers("Signed in [2023]; see [1](https://x)") == (
+        "Signed in [2023]; see [1](https://x)"
+    )

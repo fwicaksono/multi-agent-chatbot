@@ -30,7 +30,7 @@ router = APIRouter(tags=["conversations"])
 
 @router.get("/agents/{agent_id}/conversations", response_model=list[ConversationOut])
 async def list_conversations(
-    agent_id: uuid.UUID, session: AsyncSession = Depends(get_db)
+    agent_id: uuid.UUID, session: AsyncSession = Depends(get_db, scope="function")
 ) -> list[ConversationOut]:
     await agent_service.get_or_404(session, agent_id)
     out = []
@@ -49,7 +49,7 @@ async def list_conversations(
 async def create_conversation(
     agent_id: uuid.UUID,
     body: ConversationCreate | None = None,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ) -> ConversationOut:
     await agent_service.get_or_404(session, agent_id)
     conv = await conv_repo.create_conversation(session, agent_id, body.title if body else None)
@@ -65,7 +65,7 @@ async def _get_or_404(session: AsyncSession, conversation_id: uuid.UUID, with_me
 
 @router.get("/conversations/{conversation_id}", response_model=ConversationDetail)
 async def get_conversation(
-    conversation_id: uuid.UUID, session: AsyncSession = Depends(get_db)
+    conversation_id: uuid.UUID, session: AsyncSession = Depends(get_db, scope="function")
 ) -> ConversationDetail:
     conv = await _get_or_404(session, conversation_id, with_messages=True)
     messages = [MessageOut.model_validate(m) for m in conv.messages]
@@ -82,7 +82,9 @@ async def get_conversation(
 
 @router.patch("/conversations/{conversation_id}", response_model=ConversationOut)
 async def rename_conversation(
-    conversation_id: uuid.UUID, body: ConversationUpdate, session: AsyncSession = Depends(get_db)
+    conversation_id: uuid.UUID,
+    body: ConversationUpdate,
+    session: AsyncSession = Depends(get_db, scope="function"),
 ) -> ConversationOut:
     conv = await _get_or_404(session, conversation_id)
     conv.title = body.title.strip()
@@ -93,7 +95,7 @@ async def rename_conversation(
 
 @router.delete("/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_conversation(
-    conversation_id: uuid.UUID, session: AsyncSession = Depends(get_db)
+    conversation_id: uuid.UUID, session: AsyncSession = Depends(get_db, scope="function")
 ) -> Response:
     await conv_repo.delete_conversation(session, await _get_or_404(session, conversation_id))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -132,8 +134,9 @@ async def send_message(
         return JSONResponse(result, status_code=status_code)
 
     async def body_iter() -> AsyncIterator[str]:
+        turn = chat.run_turn(ctx)
         try:
-            async for event in chat.run_turn(ctx):
+            async for event in turn:
                 yield _sse(event)
         except Exception:  # last-resort guard: always terminate the stream cleanly
             logger.exception("chat.stream_crashed", extra={"conversation_id": str(conversation_id)})
@@ -147,6 +150,10 @@ async def send_message(
                     },
                 )
             )
+        finally:
+            # On client disconnect, close the turn now (not at garbage collection)
+            # so the partial answer is saved and upstream connections are released.
+            await turn.aclose()
 
     return StreamingResponse(
         body_iter(),

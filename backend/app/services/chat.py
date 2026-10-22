@@ -16,6 +16,7 @@ Database sessions are short-lived and never held open while waiting on the LLM.
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -27,10 +28,11 @@ from app.core.errors import AppError, NotFoundError
 from app.core.logging import get_logger
 from app.db.models import Agent
 from app.db.session import session_scope
+from app.ingestion.chunker import count_tokens
 from app.llm.base import ChatMessage, ChatRequest, StreamDelta, StreamEnd, TokenUsage
 from app.llm.errors import ProviderError
 from app.llm.router import FallbackEvent, LLMRouter, Target, build_chain
-from app.rag.citations import build_citations, build_sources
+from app.rag.citations import build_citations, build_sources, strip_citation_markers
 from app.rag.prompts import build_answer_messages, build_rewrite_messages
 from app.repositories import agents as agent_repo
 from app.repositories import chunks as chunk_repo
@@ -75,6 +77,16 @@ class TurnAccounting:
         self.prompt_tokens += prompt
         self.completion_tokens += completion
         self.cost_usd += cost
+
+
+# Strong references to fire-and-forget tasks (asyncio keeps only weak ones).
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coro) -> None:
+    task = asyncio.get_running_loop().create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 def _title_from(question: str) -> str:
@@ -124,7 +136,13 @@ class ChatService:
                 instructions=agent.instructions,
                 temperature=agent.temperature,
                 chain=self.chain_for(agent),
-                history=[ChatMessage(m.role, m.content) for m in history],
+                history=[
+                    ChatMessage(
+                        m.role,
+                        strip_citation_markers(m.content) if m.role == "assistant" else m.content,
+                    )
+                    for m in history
+                ],
             )
 
     async def run_turn(self, ctx: TurnContext) -> AsyncIterator[ChatEvent]:
@@ -226,6 +244,24 @@ class ChatService:
                     yield ChatEvent("fallback", event.to_dict())
                 elif isinstance(event, StreamEnd):
                     end = event
+        except (asyncio.CancelledError, GeneratorExit):
+            # The client went away (tab closed or "Stop" pressed). Save the partial
+            # answer and its estimated cost from a separate task: this coroutine is
+            # being cancelled and cannot reliably await anything any more.
+            _spawn(
+                self._save_cancelled(
+                    ctx,
+                    "".join(answer),
+                    sources,
+                    messages,
+                    primary,
+                    standalone,
+                    accounting,
+                    fallbacks,
+                    started,
+                )
+            )
+            raise
         except ProviderError as exc:
             logger.error(
                 "chat.generation_failed",
@@ -242,6 +278,14 @@ class ChatService:
                 yield event
             return
 
+        if end and end.finish_reason == "length":
+            # Hit CHAT_MAX_OUTPUT_TOKENS: say so instead of ending mid-sentence silently.
+            note = (
+                "\n\n_(The answer was cut off at the maximum length. Ask me to continue, "
+                "or ask a narrower question.)_"
+            )
+            answer.append(note)
+            yield ChatEvent("token", {"text": note})
         text = "".join(answer).strip()
         used = end or StreamEnd(provider=primary.provider, model=primary.model)
         async for event in self._finish(
@@ -366,6 +410,63 @@ class ChatService:
                 "latency_ms": latency_ms,
             },
         )
+
+    async def _save_cancelled(
+        self,
+        ctx: TurnContext,
+        partial: str,
+        sources: list[dict[str, Any]],
+        messages: list[ChatMessage],
+        primary: Target,
+        standalone: str,
+        accounting: TurnAccounting,
+        fallbacks: list[dict[str, Any]],
+        started: float,
+    ) -> None:
+        # The provider never sent its usage numbers, so estimate them locally.
+        target = (
+            Target(fallbacks[-1]["next_provider"], fallbacks[-1]["next_model"])
+            if fallbacks
+            else primary
+        )
+        prompt_tokens = sum(count_tokens(m.content) for m in messages)
+        completion_tokens = count_tokens(partial)
+        try:
+            async with session_scope() as session:
+                rec = await usage_repo.record_usage(
+                    session,
+                    agent_id=ctx.agent_id,
+                    conversation_id=ctx.conversation_id,
+                    kind="chat",
+                    provider=target.provider,
+                    model=target.model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
+                accounting.add(prompt_tokens, completion_tokens, float(rec.cost_usd))
+                await conv_repo.add_message(
+                    session,
+                    ctx.conversation_id,
+                    role="assistant",
+                    content=partial.strip(),
+                    status="cancelled",
+                    citations=build_citations(partial, sources),
+                    sources=sources,
+                    provider=target.provider,
+                    model=target.model,
+                    rewritten_query=standalone if standalone != ctx.question else None,
+                    fallback_events=fallbacks,
+                    prompt_tokens=accounting.prompt_tokens,
+                    completion_tokens=accounting.completion_tokens,
+                    cost_usd=accounting.cost_usd,
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                )
+            logger.info(
+                "chat.turn_cancelled",
+                extra={"agent_id": str(ctx.agent_id), "partial_chars": len(partial)},
+            )
+        except Exception:  # e.g. the conversation was deleted meanwhile
+            logger.exception("chat.cancel_save_failed")
 
     async def _fail(
         self,

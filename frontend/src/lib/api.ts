@@ -35,6 +35,11 @@ async function parseError(res: Response): Promise<ApiError> {
   } catch {
     /* non-JSON error body */
   }
+  if (res.status === 413)
+    return new ApiError(413, {
+      code: "payload_too_large",
+      message: "The upload is too large for the server. Upload fewer or smaller files at a time.",
+    });
   const fallback =
     res.status >= 500
       ? "The server is unavailable. Check that the API container is running."

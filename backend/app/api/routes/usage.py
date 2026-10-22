@@ -14,7 +14,9 @@ router = APIRouter(tags=["usage"])
 
 
 @router.get("/usage", response_model=list[AgentUsageSummary])
-async def usage_summary(session: AsyncSession = Depends(get_db)) -> list[AgentUsageSummary]:
+async def usage_summary(
+    session: AsyncSession = Depends(get_db, scope="function"),
+) -> list[AgentUsageSummary]:
     return [AgentUsageSummary(**row) for row in await usage_repo.all_agents_usage(session)]
 
 
@@ -22,7 +24,7 @@ async def usage_summary(session: AsyncSession = Depends(get_db)) -> list[AgentUs
 async def agent_usage(
     agent_id: uuid.UUID,
     days: int = Query(30, ge=1, le=365),
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
 ) -> AgentUsageOut:
     await agent_service.get_or_404(session, agent_id)
     data = await usage_repo.agent_usage(session, agent_id, days)

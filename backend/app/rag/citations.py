@@ -11,7 +11,20 @@ from app.retrieval.fusion import FusedHit
 
 # Matches [1], [1, 3], [1,2,5] and [1-3].
 _MARKER = re.compile(r"\[(\d+(?:\s*[,\-–]\s*\d+)*)\]")
+# Citation numbers are small (top-k <= 50) and never followed by "(", which
+# keeps "[2023]" and Markdown links "[1](url)" intact.
+_HISTORY_MARKER = re.compile(r"[ \t]?\[\d{1,2}(?:\s*[,\-–]\s*\d{1,2})*\](?!\()")
 SNIPPET_CHARS = 600
+
+
+def strip_citation_markers(text: str) -> str:
+    """Remove [n] markers from a past answer before it is replayed as history.
+
+    Markers refer to the passages of *that* turn. Passages are renumbered on
+    every turn, so leaving them in invites the model to reuse a stale number
+    and attach the citation to the wrong passage.
+    """
+    return _HISTORY_MARKER.sub("", text)
 
 
 def cited_indexes(answer: str, max_index: int) -> list[int]:

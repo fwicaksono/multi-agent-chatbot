@@ -8,13 +8,13 @@ import { cn } from "@/lib/format";
  * Turn "[1]" / "[1, 3]" / "[2-3]" citation markers into links "#cite-n" that
  * are rendered as clickable chips. Fenced/inline code is left untouched.
  */
-function linkCitations(text: string): string {
+function linkCitations(text: string, maxIndex: number): string {
   return text
     .split(/(```[\s\S]*?```|`[^`]*`)/g)
     .map((part, i) =>
       i % 2 === 1
         ? part
-        : part.replace(/\[(\d+(?:\s*[,\-–]\s*\d+)*)\](?!\()/g, (_m, group: string) => {
+        : part.replace(/\[(\d+(?:\s*[,\-–]\s*\d+)*)\](?!\()/g, (_m: string, group: string) => {
             const nums: number[] = [];
             for (const piece of group.split(/\s*,\s*/)) {
               const range = piece.split(/\s*[-–]\s*/).map(Number);
@@ -22,6 +22,8 @@ function linkCitations(text: string): string {
                 for (let n = range[0]; n <= range[1]; n++) nums.push(n);
               else nums.push(Number(piece));
             }
+            // Leave "[2023]" and other non-source numbers as plain text.
+            if (!nums.length || nums.some((n) => !Number.isInteger(n) || n < 1 || n > maxIndex)) return _m;
             return nums.map((n) => `[${n}](#cite-${n})`).join("");
           }),
     )
@@ -86,7 +88,7 @@ export const Markdown = memo(function Markdown({
           },
         }}
       >
-        {linkCitations(content)}
+        {linkCitations(content, sources.length)}
       </ReactMarkdown>
     </div>
   );

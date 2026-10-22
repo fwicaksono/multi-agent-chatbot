@@ -93,6 +93,36 @@ class IngestionWorker:
         filename: str,
         attempt: int,
     ) -> None:
+        # A single stage can be long (OCR of a large scan). Keep the job lock
+        # fresh meanwhile so no other worker reclaims it as stale and processes
+        # the same document twice.
+        heartbeat = asyncio.create_task(self._heartbeat(document_id))
+        try:
+            await self._run_job(document_id, agent_id, path, file_type, filename, attempt)
+        finally:
+            heartbeat.cancel()
+
+    async def _heartbeat(self, document_id: uuid.UUID) -> None:
+        interval = max(self.settings.worker_stale_lock_seconds / 4, 0.2)
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                async with session_scope() as session:
+                    await doc_repo.heartbeat(session, document_id)
+            except Exception:  # a missed beat is not fatal; the next one retries
+                logger.warning(
+                    "ingestion.heartbeat_failed", extra={"document_id": str(document_id)}
+                )
+
+    async def _run_job(
+        self,
+        document_id: uuid.UUID,
+        agent_id: uuid.UUID,
+        path: Path,
+        file_type: str,
+        filename: str,
+        attempt: int,
+    ) -> None:
         log = {"document_id": str(document_id), "agent_id": str(agent_id), "attempt": attempt}
         logger.info("ingestion.started", extra={**log, "doc_filename": filename})
         started = time.perf_counter()
@@ -181,6 +211,8 @@ class IngestionWorker:
             if not await doc_repo.exists(session, document_id):
                 return False
             await doc_repo.set_stage(session, document_id, DocumentStage.INDEXING)
+            # Idempotent: never leave duplicates if the job ran more than once.
+            await doc_repo.delete_chunks(session, document_id)
             await chunk_repo.insert_chunks(
                 session, agent_id, document_id, result.chunks, self.settings.fts_language
             )

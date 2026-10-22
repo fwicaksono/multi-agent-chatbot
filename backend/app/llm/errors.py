@@ -154,6 +154,16 @@ def model_not_found_error(provider: str, model: str | None, status: int | None =
     )
 
 
+def empty_response_error(provider: str, model: str | None) -> ProviderError:
+    # Fallback-eligible but not retryable: e.g. the response was content-filtered.
+    return ProviderError(
+        f"{provider} returned an empty response for model '{model}' (it may have been "
+        "filtered). Try rephrasing, or use another model.",
+        provider=provider,
+        model=model,
+    )
+
+
 def bad_request_error(provider: str, model: str | None, detail: str, status: int | None = None):
     return ProviderBadRequestError(
         f"{provider} rejected the request: {detail}",

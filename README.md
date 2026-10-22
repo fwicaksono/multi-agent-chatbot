@@ -119,7 +119,7 @@ flowchart LR
 4. **Generate.** The system prompt is the agent's instructions, followed by non-negotiable grounding rules, followed by the numbered passages. The recent history and the question come after it. Tokens stream to the browser over Server-Sent Events. If the provider fails before the first token, the router falls back to the next provider in the chain.
 5. **Cite and persist.** `[n]` markers are parsed into citations. The answer, citations, consulted sources, provider/model actually used, fallback events, tokens, cost and latency are stored. Usage records are written per agent.
 
-SSE events: `meta` → `rewrite`? → `sources` → `fallback`* → `token`* → `done` | `error`. `?stream=false` returns the final payload as JSON, which the evaluation script uses.
+SSE events: `meta` → `rewrite`? → `sources` → `fallback`* → `token`* → `done` | `error`. If the client disconnects mid-answer (tab closed or *Stop*), the partial answer is saved with status `cancelled`, together with its estimated token usage. `?stream=false` returns the final payload as JSON, which the evaluation script uses.
 
 ### Ingestion flow
 
@@ -130,7 +130,9 @@ The worker claims the job with `SELECT … FOR UPDATE SKIP LOCKED`, then runs **
 Failures are classified:
 - **Permanent** (corrupted, encrypted, empty, scanned without OCR): `failed` with a user-facing message.
 - **Transient** (embedding rate limit, timeout, outage): re-queued with exponential back-off, up to `WORKER_MAX_ATTEMPTS`.
-- **Crash**: a stale lock (`WORKER_STALE_LOCK_SECONDS`) makes the job claimable again.
+- **Crash**: a stale lock (`WORKER_STALE_LOCK_SECONDS`) makes the job claimable again. While a job runs, a heartbeat keeps its lock fresh, so a long OCR job is never picked up twice; indexing is idempotent anyway (existing chunks are replaced).
+
+PDFium (the PDF library) is not thread-safe, so all PDFium calls share one process-wide lock. OCR runs outside that lock, so parallel jobs still overlap.
 
 ### Code layout
 
@@ -241,8 +243,8 @@ Latest run (`backend/eval/results/latest.md`; `gpt-4.1-mini`, `text-embedding-3-
 
 | Agent | Answer accuracy | Citation accuracy | Abstention accuracy | False "I don't know" | Multi-turn | Avg latency | Cost (whole run) |
 |---|---|---|---|---|---|---|---|
-| HR | 100% | 100% | 100% | 0% | 100% (2/2) | 1.6 s | $0.0082 |
-| Legal | 100% | 100% | 100% | 0% | 100% (2/2) | 1.3 s | $0.0072 |
+| HR | 100% | 100% | 100% | 0% | 100% (2/2) | 1.4 s | $0.0083 |
+| Legal | 100% | 100% | 100% | 0% | 100% (2/2) | 1.4 s | $0.0072 |
 
 Metric definitions:
 - **Answer accuracy:** all expected key facts appear in the answer.
@@ -282,13 +284,13 @@ To **add models to LiteLLM** (for example Anthropic, Gemini or a local Ollama), 
 # Backend (Python 3.12, uv)
 cd backend
 uv sync                                    # installs runtime + dev deps
-uv run pytest                              # 79 unit tests; integration tests skip without a DB
+uv run pytest                              # 83 unit tests; integration tests skip without a DB
 uv run ruff check . && uv run ruff format --check .
 
 # Integration tests: real PostgreSQL + pgvector (isolation, cascade deletes, full API flow)
 docker run -d --name pg-test -e POSTGRES_USER=chatbot -e POSTGRES_PASSWORD=chatbot -e POSTGRES_DB=chatbot_test \
   -p 55432:5432 pgvector/pgvector:0.8.0-pg17
-TEST_DATABASE_URL=postgresql+asyncpg://chatbot:chatbot@localhost:55432/chatbot_test uv run pytest   # 91 tests
+TEST_DATABASE_URL=postgresql+asyncpg://chatbot:chatbot@localhost:55432/chatbot_test uv run pytest   # 99 tests
 
 # Run the API locally against that DB (worker embedded in the API process)
 DATABASE_URL=postgresql+asyncpg://chatbot:chatbot@localhost:55432/chatbot_test EMBEDDED_WORKER=true \
@@ -350,7 +352,7 @@ Interactive docs are at **`/api/docs`**. Summary:
 - **Retrieval quality:** add a cross-encoder reranker (for example Cohere Rerank or `bge-reranker`) after RRF; tune `ef_search`; use parent/neighbour-chunk expansion for long clauses; add an Indonesian stemmer for full-text search (Postgres has no built-in Indonesian configuration).
 - **Evaluation:** a larger, noisier public corpus (real handbooks and contract templates); LLM-as-judge for faithfulness and completeness; run the eval in CI on every prompt or model change; track regressions over time.
 - **Ingestion:** layout-aware PDF parsing (tables, multi-column layouts, headers and footers), PDF heading detection for section citations, more formats (PPTX, HTML, TXT), streaming uploads to object storage (S3/GCS behind the same `FileStorage` interface), and a real queue (for example Redis/Arq) at higher throughput.
-- **Chat:** persist partially streamed answers when the client disconnects; token-budgeted history (summarise old turns instead of a fixed window); conversation export.
+- **Chat:** token-budgeted history (summarise old turns instead of a fixed window); conversation export.
 - **Operations:** OpenTelemetry tracing and metrics (latency per stage, provider error rates), an alert when fallback is used frequently, and budget limits per agent built on the usage table.
 - **Cloud demo (bonus B7):** the production configuration is included and tested locally (§12), but no public demo link is provided. Beyond a single server, the next step is a managed Postgres with pgvector (an RDS override is included), a container service for api, worker and web, and a secret manager for keys.
 
@@ -416,7 +418,7 @@ To use **Amazon RDS for PostgreSQL** instead of the bundled database container, 
 | **P5** Embedding provider separate from chat provider | `embeddings/` (global setting); README §4 | Configuration + docs |
 | **P6** Keys only from environment, never committed | `core/config.py` (`SecretStr`); `.env` git-ignored | Secret scan of the git history |
 | **T1–T6** FastAPI, UI, persistent vector store, `docker compose up`, `.env` / `.env.example` | See §1, §3, §6 | `docker compose up --build` from a clean checkout |
-| **T7** Unit tests for ingestion and the provider abstraction | `backend/tests/unit` | 79 unit tests |
+| **T7** Unit tests for ingestion and the provider abstraction | `backend/tests/unit` | 83 unit tests |
 | **T8** Clear errors and logs for timeouts, rate limits, bad keys | `llm/errors.py`, retries, JSON logs | Provider error tests; `llm.retry` / `llm.fallback` logs |
 | **T9** Public, non-confidential data | Fictional generated documents | `scripts/generate_sample_data.py` |
 | **B1** Streaming | SSE end to end (nginx and Caddy unbuffered) | UI + streaming tests |

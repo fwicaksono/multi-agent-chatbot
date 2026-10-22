@@ -49,6 +49,12 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
 
 
 async def get_db() -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency: one session per request, committed on success."""
+    """FastAPI dependency: one session per request, committed on success.
+
+    Always declare it as ``Depends(get_db, scope="function")``. With FastAPI's
+    default "request" scope the commit runs *after* the response is sent, so a
+    client could get "201 Created" and then not find the row on its next call,
+    or get a success response for a commit that failed.
+    """
     async with session_scope() as session:
         yield session

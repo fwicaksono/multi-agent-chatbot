@@ -15,7 +15,8 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health")
 async def health(
-    session: AsyncSession = Depends(get_db), settings: Settings = Depends(settings_dep)
+    session: AsyncSession = Depends(get_db, scope="function"),
+    settings: Settings = Depends(settings_dep),
 ) -> JSONResponse:
     """Liveness + readiness: checks the database and reports optional features."""
     try:

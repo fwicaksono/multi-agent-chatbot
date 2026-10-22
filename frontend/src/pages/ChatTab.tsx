@@ -18,6 +18,7 @@ function toView(m: Message): AssistantView {
   return {
     content: m.content,
     status: m.status === "error" ? "error" : "complete",
+    stopped: m.status === "cancelled",
     citations: m.citations,
     sources: m.sources,
     provider: m.provider,
@@ -155,7 +156,7 @@ function ConversationList({
             >
               <span className="block truncate">{c.title}</span>
               <span className="block text-[11px] text-slate-400">
-                {formatRelative(c.updated_at)} · {c.message_count} messages
+                {formatRelative(c.updated_at)} · {c.message_count} message{c.message_count === 1 ? "" : "s"}
               </span>
             </button>
             <button
@@ -227,6 +228,7 @@ export function ChatTab() {
       const text = question.trim();
       if (!text || streaming) return;
       setInput("");
+      if (inputRef.current) inputRef.current.style.height = "auto";
       setPending({ question: text, view: emptyView() });
 
       let convId = conversationId;
@@ -306,6 +308,19 @@ export function ChatTab() {
         qc.invalidateQueries({ queryKey: keys.conversations(agent.id) });
         qc.invalidateQueries({ queryKey: keys.agentUsage(agent.id) });
         setPending((p) => (p?.view.error?.code === "cancelled" ? p : null));
+        if (controller.signal.aborted) {
+          // The server saves the partial answer right after the disconnect;
+          // swap the local "stopped" view for the saved message shortly after.
+          setTimeout(async () => {
+            try {
+              qc.setQueryData(keys.conversation(convId!), await api.getConversation(convId!));
+              qc.invalidateQueries({ queryKey: keys.conversations(agent.id) });
+            } catch {
+              /* keep the local view */
+            }
+            setPending((p) => (p?.view.error?.code === "cancelled" ? null : p));
+          }, 1200);
+        }
       }
     },
     [agent.id, conversationId, qc, setParams, streaming],

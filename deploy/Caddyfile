@@ -15,8 +15,9 @@
 		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
 	}
 
+	# Multi-file uploads: MAX_FILES_PER_UPLOAD (20) x MAX_UPLOAD_MB (25) + headroom.
 	request_body {
-		max_size 200MB
+		max_size 520MB
 	}
 
 	header {

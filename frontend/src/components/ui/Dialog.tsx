@@ -19,6 +19,10 @@ export function Dialog({ open, onClose, title, description, children, footer, si
   const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const descId = useId();
+  // Parents usually pass a new onClose function on every render. Reading it from
+  // a ref keeps the effect below from re-running (and stealing focus) each time.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
@@ -33,7 +37,7 @@ export function Dialog({ open, onClose, title, description, children, footer, si
     (focusables()[1] ?? focusables()[0] ?? panel)?.focus();
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onCloseRef.current();
       if (e.key === "Tab") {
         const items = focusables();
         if (!items.length) return;
@@ -55,7 +59,7 @@ export function Dialog({ open, onClose, title, description, children, footer, si
       document.body.style.overflow = "";
       previous?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
   return createPortal(

@@ -23,6 +23,7 @@ from app.llm.errors import (
     ProviderError,
     auth_error,
     bad_request_error,
+    empty_response_error,
     model_not_found_error,
     quota_error,
     rate_limit_error,
@@ -82,6 +83,8 @@ class OpenAIProvider(LLMProvider):
             resp = await self.client.chat.completions.create(**self._params(request))
         except openai.OpenAIError as exc:
             raise self._translate(exc, request.model) from exc
+        if not resp.choices:
+            raise empty_response_error(self.display_name, request.model)
         choice = resp.choices[0]
         usage = TokenUsage(
             prompt_tokens=resp.usage.prompt_tokens if resp.usage else 0,
@@ -103,20 +106,21 @@ class OpenAIProvider(LLMProvider):
             stream = await self.client.chat.completions.create(
                 **self._params(request), stream=True, stream_options={"include_usage": True}
             )
-            async for chunk in stream:
-                model = chunk.model or model
-                if chunk.usage:
-                    usage = TokenUsage(
-                        prompt_tokens=chunk.usage.prompt_tokens,
-                        completion_tokens=chunk.usage.completion_tokens,
-                    )
-                if not chunk.choices:
-                    continue
-                choice = chunk.choices[0]
-                if choice.finish_reason:
-                    finish_reason = choice.finish_reason
-                if choice.delta and choice.delta.content:
-                    yield StreamDelta(choice.delta.content)
+            async with stream:  # closes the HTTP response even if the consumer stops early
+                async for chunk in stream:
+                    model = chunk.model or model
+                    if chunk.usage:
+                        usage = TokenUsage(
+                            prompt_tokens=chunk.usage.prompt_tokens,
+                            completion_tokens=chunk.usage.completion_tokens,
+                        )
+                    if not chunk.choices:
+                        continue
+                    choice = chunk.choices[0]
+                    if choice.finish_reason:
+                        finish_reason = choice.finish_reason
+                    if choice.delta and choice.delta.content:
+                        yield StreamDelta(choice.delta.content)
         except openai.OpenAIError as exc:
             raise self._translate(exc, request.model) from exc
         yield StreamEnd(provider=self.name, model=model, usage=usage, finish_reason=finish_reason)

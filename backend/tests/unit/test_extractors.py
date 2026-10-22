@@ -72,3 +72,21 @@ def test_blank_pdf_with_failed_ocr_yields_no_blocks(sample_data: Path, monkeypat
 def test_normalise_text_joins_hyphenation_and_collapses_whitespace():
     raw = "Employ-\nees   get\t18 days.\r\n\n\n\nNew  paragraph"
     assert normalise_text(raw) == "Employees get 18 days.\n\nNew paragraph"
+
+
+def test_parallel_pdf_extraction_is_thread_safe(sample_data: Path):
+    """Regression: PDFium is not thread-safe; the worker extracts in threads.
+
+    Without the module-level lock this crashed the process (SIGSEGV) as soon as
+    two PDFs were extracted at the same time.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    path = sample_data / "hr" / "employee_handbook.pdf"
+    extractor = PdfExtractor(ocr_enabled=False)
+    expected = [b.text for b in extractor.extract(path).blocks]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(
+            pool.map(lambda _: [b.text for b in extractor.extract(path).blocks], range(80))
+        )
+    assert all(r == expected for r in results)

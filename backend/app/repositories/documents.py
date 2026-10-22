@@ -104,6 +104,19 @@ async def set_stage(session: AsyncSession, document_id: uuid.UUID, stage: Docume
     )
 
 
+async def heartbeat(session: AsyncSession, document_id: uuid.UUID) -> None:
+    """Refresh the job lock so a long-running job is not reclaimed as stale."""
+    await session.execute(
+        update(Document)
+        .where(Document.id == document_id, Document.status == DocumentStatus.PROCESSING)
+        .values(locked_at=func.now())
+    )
+
+
+async def delete_chunks(session: AsyncSession, document_id: uuid.UUID) -> None:
+    await session.execute(delete(Chunk).where(Chunk.document_id == document_id))
+
+
 async def mark_ready(session: AsyncSession, document_id: uuid.UUID, **fields: Any) -> None:
     await session.execute(
         update(Document)

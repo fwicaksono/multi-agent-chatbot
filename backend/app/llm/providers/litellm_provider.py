@@ -25,7 +25,13 @@ from app.llm.base import (
     StreamEvent,
     TokenUsage,
 )
-from app.llm.errors import ProviderError, error_from_status, timeout_error, unavailable_error
+from app.llm.errors import (
+    ProviderError,
+    empty_response_error,
+    error_from_status,
+    timeout_error,
+    unavailable_error,
+)
 from app.llm.registry import register_provider
 from app.llm.sse import error_detail, iter_sse_json, retry_after_seconds
 
@@ -86,6 +92,8 @@ class LiteLLMProvider(LLMProvider):
             raise self._http_error(resp, request.model)
 
         body = resp.json()
+        if not body.get("choices"):
+            raise empty_response_error(self.display_name, request.model)
         choice = body["choices"][0]
         usage = _usage(body.get("usage"))
         if cost := resp.headers.get("x-litellm-response-cost"):

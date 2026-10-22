@@ -27,7 +27,13 @@ from app.llm.base import (
     StreamEvent,
     TokenUsage,
 )
-from app.llm.errors import ProviderError, error_from_status, timeout_error, unavailable_error
+from app.llm.errors import (
+    ProviderError,
+    empty_response_error,
+    error_from_status,
+    timeout_error,
+    unavailable_error,
+)
 from app.llm.registry import register_provider
 from app.llm.sse import error_detail, iter_sse_json, retry_after_seconds
 
@@ -101,6 +107,8 @@ class OpenRouterProvider(LLMProvider):
         # OpenRouter may return HTTP 200 with an error object (e.g. upstream failure).
         if err := body.get("error"):
             raise self._body_error(err, request.model)
+        if not body.get("choices"):
+            raise empty_response_error(self.display_name, request.model)
         choice = body["choices"][0]
         return ChatResponse(
             content=choice["message"].get("content") or "",

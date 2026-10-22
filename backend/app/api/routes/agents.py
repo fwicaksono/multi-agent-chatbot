@@ -35,7 +35,7 @@ async def _out(session: AsyncSession, agent) -> AgentOut:
 
 
 @router.get("", response_model=list[AgentOut])
-async def list_agents(session: AsyncSession = Depends(get_db)) -> list[AgentOut]:
+async def list_agents(session: AsyncSession = Depends(get_db, scope="function")) -> list[AgentOut]:
     result = []
     for agent, counts in await agent_repo.list_agents(session):
         out = AgentOut.model_validate(agent)
@@ -45,19 +45,25 @@ async def list_agents(session: AsyncSession = Depends(get_db)) -> list[AgentOut]
 
 
 @router.post("", response_model=AgentOut, status_code=status.HTTP_201_CREATED)
-async def create_agent(data: AgentCreate, session: AsyncSession = Depends(get_db)) -> AgentOut:
+async def create_agent(
+    data: AgentCreate, session: AsyncSession = Depends(get_db, scope="function")
+) -> AgentOut:
     agent = await agent_service.create(session, data)
     return await _out(session, agent)
 
 
 @router.get("/{agent_id}", response_model=AgentOut)
-async def get_agent(agent_id: uuid.UUID, session: AsyncSession = Depends(get_db)) -> AgentOut:
+async def get_agent(
+    agent_id: uuid.UUID, session: AsyncSession = Depends(get_db, scope="function")
+) -> AgentOut:
     return await _out(session, await agent_service.get_or_404(session, agent_id))
 
 
 @router.patch("/{agent_id}", response_model=AgentOut)
 async def update_agent(
-    agent_id: uuid.UUID, data: AgentUpdate, session: AsyncSession = Depends(get_db)
+    agent_id: uuid.UUID,
+    data: AgentUpdate,
+    session: AsyncSession = Depends(get_db, scope="function"),
 ) -> AgentOut:
     agent = await agent_service.update(session, agent_id, data)
     return await _out(session, agent)
@@ -66,7 +72,7 @@ async def update_agent(
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent(
     agent_id: uuid.UUID,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
     storage: FileStorage = Depends(get_storage),
 ) -> Response:
     await agent_service.delete(session, storage, agent_id)
@@ -77,7 +83,7 @@ async def delete_agent(
 async def retrieve(
     agent_id: uuid.UUID,
     body: RetrieveRequest,
-    session: AsyncSession = Depends(get_db),
+    session: AsyncSession = Depends(get_db, scope="function"),
     retriever: HybridRetriever = Depends(get_retriever),
 ) -> RetrieveResponse:
     """Run retrieval only (no LLM). Used by the evaluation script and for debugging."""
